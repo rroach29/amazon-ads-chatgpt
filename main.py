@@ -8,6 +8,7 @@ from routes_scheduler import router as scheduler_router
 from scheduler_tasks import start_scheduler
 from routes_recommendations import router as recommendations_router
 from routes_optimization_queue import router as optimization_queue_router
+from routes_business_context import router as business_context_router
 
 app = FastAPI(title="Business OS API")
 
@@ -18,6 +19,7 @@ app.include_router(reports_router, prefix="/reports", tags=["Reports"])
 app.include_router(scheduler_router, prefix="/scheduler", tags=["Scheduler"])
 app.include_router(recommendations_router, prefix="/recommendations", tags=["Recommendations"])
 app.include_router(optimization_queue_router,prefix="/optimization-queue",tags=["Optimization Queue"])
+app.include_router(business_context_router, prefix="/business-os", tags=["Business OS"])
 
 @app.get("/")
 def root():
