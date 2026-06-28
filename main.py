@@ -247,19 +247,83 @@ def create_sp_search_terms_report(x_api_key: str = Header(...)):
 
 
 @app.post("/reports/analyze")
-def create_analysis_reports(x_api_key: str = Header(...)):
+def analyze_ads_account(x_api_key: str = Header(...)):
     verify_key(x_api_key)
 
     campaign_report = create_report("campaigns")
-    search_term_report = create_report("search_terms")
+    search_report = create_report("search_terms")
+
+    campaign_id = campaign_report.get("reportId")
+    search_id = search_report.get("reportId")
+
+    campaign_download = download_report_data(campaign_id)
+    search_download = download_report_data(search_id)
+
+    if not campaign_download.get("ready") or not search_download.get("ready"):
+        return {
+            "status": "PENDING",
+            "message": "Reports are still processing. Ask again in 1-3 minutes: Analyze my Amazon Ads account.",
+            "campaignReportId": campaign_id,
+            "searchTermReportId": search_id,
+            "campaignStatus": campaign_download.get("status"),
+            "searchTermStatus": search_download.get("status"),
+        }
+
+    campaigns = enrich_rows(campaign_download.get("data", []))
+    search_terms = enrich_rows(search_download.get("data", []))
+
+    high_spend_no_sales = sorted(
+        [r for r in campaigns if r["spend"] >= 5 and r["sales"] == 0],
+        key=lambda r: r["spend"],
+        reverse=True,
+    )[:10]
+
+    high_acos = sorted(
+        [r for r in campaigns if r["acos"] is not None and r["acos"] >= 40],
+        key=lambda r: r["acos"],
+        reverse=True,
+    )[:10]
+
+    best_campaigns = sorted(
+        [r for r in campaigns if r["sales"] > 0],
+        key=lambda r: r["sales"],
+        reverse=True,
+    )[:10]
+
+    wasted_search_terms = sorted(
+        [r for r in search_terms if r["spend"] >= 3 and r["sales"] == 0],
+        key=lambda r: r["spend"],
+        reverse=True,
+    )[:25]
+
+    strong_search_terms = sorted(
+        [r for r in search_terms if r["sales"] > 0 and r["roas"] is not None],
+        key=lambda r: r["roas"],
+        reverse=True,
+    )[:25]
 
     return {
-        "status": "PENDING",
-        "message": "Reports created. Wait 1-3 minutes, then call /reports/analyze/{campaign_report_id}/{search_term_report_id}.",
-        "campaignReportId": campaign_report.get("reportId"),
-        "searchTermReportId": search_term_report.get("reportId"),
-        "campaignReport": campaign_report,
-        "searchTermReport": search_term_report,
+        "status": "COMPLETED",
+        "summary": {
+            "campaigns": summarize(campaigns),
+            "searchTerms": summarize(search_terms),
+        },
+        "alerts": {
+            "highSpendNoSalesCampaigns": high_spend_no_sales,
+            "highAcosCampaigns": high_acos,
+            "wastedSearchTerms": wasted_search_terms,
+        },
+        "opportunities": {
+            "bestCampaigns": best_campaigns,
+            "strongSearchTerms": strong_search_terms,
+        },
+        "recommendations": [
+            "Reduce bids or pause campaigns with spend and no sales.",
+            "Lower bids on campaigns above target ACOS.",
+            "Harvest strong converting search terms into exact-match campaigns.",
+            "Add irrelevant high-spend/no-sale search terms as negatives.",
+            "Increase budget on profitable campaigns that are limited by budget.",
+        ],
     }
 
 
