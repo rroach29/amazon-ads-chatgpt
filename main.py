@@ -716,3 +716,123 @@ def get_dashboard(x_api_key: str = Header(...)):
         "alerts": latest.alerts,
         "recommendations": latest.recommendations,
     }
+@app.post("/dashboard/collect/{campaign_report_id}/{search_term_report_id}")
+def collect_dashboard(
+    campaign_report_id: str,
+    search_term_report_id: str,
+    x_api_key: str = Header(...),
+):
+    verify_key(x_api_key)
+
+    campaign_download = download_report_data(campaign_report_id)
+    search_download = download_report_data(search_term_report_id)
+
+    if not campaign_download.get("ready") or not search_download.get("ready"):
+        return {
+            "status": "PENDING",
+            "message": "One or both reports are not ready yet.",
+            "campaignStatus": campaign_download.get("status"),
+            "searchTermStatus": search_download.get("status"),
+        }
+
+    campaigns = enrich_rows(campaign_download.get("data", []))
+    search_terms = enrich_rows(search_download.get("data", []))
+
+    summary = summarize(campaigns)
+
+    alerts = {
+        "highSpendNoSalesCampaigns": sorted(
+            [r for r in campaigns if r["spend"] >= 5 and r["sales"] == 0],
+            key=lambda r: r["spend"],
+            reverse=True,
+        )[:10],
+        "highAcosCampaigns": sorted(
+            [r for r in campaigns if r["acos"] is not None and r["acos"] >= 40],
+            key=lambda r: r["acos"],
+            reverse=True,
+        )[:10],
+        "wastedSearchTerms": sorted(
+            [r for r in search_terms if r["spend"] >= 3 and r["sales"] == 0],
+            key=lambda r: r["spend"],
+            reverse=True,
+        )[:25],
+    }
+
+    recommendations = [
+        {
+            "priority": "High",
+            "type": "Waste reduction",
+            "recommendation": "Review campaigns and search terms with spend but no sales.",
+        },
+        {
+            "priority": "High",
+            "type": "ACOS control",
+            "recommendation": "Reduce bids on campaigns above target ACOS.",
+        },
+        {
+            "priority": "Medium",
+            "type": "Keyword harvesting",
+            "recommendation": "Move strong converting search terms into exact-match campaigns.",
+        },
+    ]
+
+    health_score = 100
+    if summary.get("acos") and summary["acos"] > 40:
+        health_score -= 25
+    if len(alerts["highSpendNoSalesCampaigns"]) > 0:
+        health_score -= 15
+    if len(alerts["wastedSearchTerms"]) > 5:
+        health_score -= 15
+
+    health_score = max(0, health_score)
+
+    db = SessionLocal()
+
+    today = date.today()
+
+    existing = (
+        db.query(DailyDashboard)
+        .filter(DailyDashboard.date == today)
+        .filter(DailyDashboard.channel == "amazon_ads")
+        .first()
+    )
+
+    if existing:
+        existing.spend = summary["spend"]
+        existing.sales = summary["sales"]
+        existing.acos = summary["acos"]
+        existing.roas = summary["roas"]
+        existing.clicks = summary["clicks"]
+        existing.impressions = summary["impressions"]
+        existing.orders = summary["orders"]
+        existing.health_score = health_score
+        existing.alerts = alerts
+        existing.recommendations = recommendations
+    else:
+        dashboard = DailyDashboard(
+            date=today,
+            channel="amazon_ads",
+            spend=summary["spend"],
+            sales=summary["sales"],
+            acos=summary["acos"],
+            roas=summary["roas"],
+            clicks=summary["clicks"],
+            impressions=summary["impressions"],
+            orders=summary["orders"],
+            health_score=health_score,
+            alerts=alerts,
+            recommendations=recommendations,
+        )
+        db.add(dashboard)
+
+    db.commit()
+    db.close()
+
+    return {
+        "status": "OK",
+        "message": "Dashboard collected and saved.",
+        "summary": summary,
+        "health_score": health_score,
+        "alerts": alerts,
+        "recommendations": recommendations,
+    }
