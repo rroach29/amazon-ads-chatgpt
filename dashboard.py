@@ -4,7 +4,25 @@ from database import SessionLocal
 from models import DailyDashboard, CampaignDailyDetail, SearchTermDailyDetail
 from amazon_ads import download_report_data
 from analytics import build_dashboard_analysis
+from models import CampaignDailyDetail, SearchTermDailyDetail
+from datetime import date
 
+def safe_float(value):
+    try:
+        if value in [None, "", "NaN"]:
+            return 0.0
+        return float(value)
+    except Exception:
+        return 0.0
+
+
+def safe_int(value):
+    try:
+        if value in [None, "", "NaN"]:
+            return 0
+        return int(float(value))
+    except Exception:
+        return 0
 
 def save_dashboard_from_reports(campaign_report_id: str, search_term_report_id: str):
     campaign_download = download_report_data(campaign_report_id)
@@ -202,3 +220,126 @@ def get_dashboard_history(days: int = 30):
             for row in rows
         ],
     }
+def save_campaign_daily_details(db, campaign_rows, report_date=None):
+    if report_date is None:
+        report_date = date.today()
+
+    for row in campaign_rows:
+        detail = CampaignDailyDetail(
+            date=report_date,
+
+            campaign_id=str(row.get("campaignId") or row.get("campaign_id") or ""),
+            campaign_name=row.get("campaignName") or row.get("campaign_name") or "",
+            campaign_status=row.get("campaignStatus") or row.get("campaign_status") or "",
+            campaign_type=row.get("campaignType") or row.get("campaign_type") or "Sponsored Products",
+
+            impressions=safe_int(row.get("impressions")),
+            clicks=safe_int(row.get("clicks")),
+            spend=safe_float(row.get("cost") or row.get("spend")),
+            sales=safe_float(row.get("sales") or row.get("attributedSales14d")),
+            orders=safe_int(row.get("orders") or row.get("purchases14d")),
+
+            ctr=safe_float(row.get("ctr")),
+            cpc=safe_float(row.get("cpc")),
+            conversion_rate=safe_float(row.get("conversionRate") or row.get("conversion_rate")),
+            acos=safe_float(row.get("acos")),
+            roas=safe_float(row.get("roas")),
+        )
+
+        db.add(detail)
+
+    db.commit()
+def save_search_term_daily_details(db, search_term_rows, report_date=None):
+    if report_date is None:
+        report_date = date.today()
+
+    for row in search_term_rows:
+        detail = SearchTermDailyDetail(
+            date=report_date,
+
+            campaign_id=str(row.get("campaignId") or row.get("campaign_id") or ""),
+            campaign_name=row.get("campaignName") or row.get("campaign_name") or "",
+            ad_group_name=row.get("adGroupName") or row.get("ad_group_name") or "",
+
+            search_term=row.get("searchTerm") or row.get("customerSearchTerm") or row.get("search_term") or "",
+            keyword=row.get("keyword") or row.get("targeting") or "",
+            match_type=row.get("matchType") or row.get("match_type") or "",
+
+            impressions=safe_int(row.get("impressions")),
+            clicks=safe_int(row.get("clicks")),
+            spend=safe_float(row.get("cost") or row.get("spend")),
+            sales=safe_float(row.get("sales") or row.get("attributedSales14d")),
+            orders=safe_int(row.get("orders") or row.get("purchases14d")),
+
+            ctr=safe_float(row.get("ctr")),
+            cpc=safe_float(row.get("cpc")),
+            conversion_rate=safe_float(row.get("conversionRate") or row.get("conversion_rate")),
+            acos=safe_float(row.get("acos")),
+            roas=safe_float(row.get("roas")),
+        )
+
+        db.add(detail)
+
+    db.commit()
+
+def get_campaigns(db, limit=100):
+    return (
+        db.query(CampaignDailyDetail)
+        .order_by(CampaignDailyDetail.date.desc(), CampaignDailyDetail.spend.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+def get_top_campaigns(db, limit=25):
+    return (
+        db.query(CampaignDailyDetail)
+        .filter(CampaignDailyDetail.sales > 0)
+        .order_by(CampaignDailyDetail.sales.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+def get_waste_campaigns(db, min_spend=10, limit=25):
+    return (
+        db.query(CampaignDailyDetail)
+        .filter(CampaignDailyDetail.spend >= min_spend)
+        .filter(CampaignDailyDetail.sales == 0)
+        .order_by(CampaignDailyDetail.spend.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+def get_search_terms(db, limit=100):
+    return (
+        db.query(SearchTermDailyDetail)
+        .order_by(SearchTermDailyDetail.date.desc(), SearchTermDailyDetail.spend.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+def get_winning_search_terms(db, max_acos=35, min_orders=1, limit=25):
+    return (
+        db.query(SearchTermDailyDetail)
+        .filter(SearchTermDailyDetail.orders >= min_orders)
+        .filter(SearchTermDailyDetail.acos <= max_acos)
+        .order_by(SearchTermDailyDetail.sales.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+def get_wasted_search_terms(db, min_spend=10, limit=25):
+    return (
+        db.query(SearchTermDailyDetail)
+        .filter(SearchTermDailyDetail.spend >= min_spend)
+        .filter(SearchTermDailyDetail.sales == 0)
+        .order_by(SearchTermDailyDetail.spend.desc())
+        .limit(limit)
+        .all()
+    )
+
+
