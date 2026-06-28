@@ -121,3 +121,53 @@ class ScheduledReportJob(Base):
     search_term_report_id = Column(String, index=True)
     status = Column(String, default="PENDING")
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class CampaignDailyDetail(Base):
+    __tablename__ = "campaign_daily_details"
+
+    id = Column(Integer, primary_key=True, index=True)
+    date = Column(Date, index=True)
+    channel = Column(String, index=True, default="amazon_ads")
+    campaign_id = Column(String, index=True)
+    campaign_name = Column(String)
+    campaign_status = Column(String)
+    impressions = Column(Integer, default=0)
+    clicks = Column(Integer, default=0)
+    spend = Column(Float, default=0)
+    sales = Column(Float, default=0)
+    orders = Column(Integer, default=0)
+    acos = Column(Float)
+    roas = Column(Float)
+    ctr = Column(Float)
+    cpc = Column(Float)
+    conversion_rate = Column(Float)
+    raw = Column(JSON)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SearchTermDailyDetail(Base):
+    __tablename__ = "search_term_daily_details"
+
+    id = Column(Integer, primary_key=True, index=True)
+    date = Column(Date, index=True)
+    channel = Column(String, index=True, default="amazon_ads")
+    campaign_id = Column(String, index=True)
+    campaign_name = Column(String)
+    ad_group_id = Column(String)
+    ad_group_name = Column(String)
+    keyword_id = Column(String)
+    keyword = Column(String)
+    match_type = Column(String)
+    search_term = Column(String, index=True)
+    impressions = Column(Integer, default=0)
+    clicks = Column(Integer, default=0)
+    spend = Column(Float, default=0)
+    sales = Column(Float, default=0)
+    orders = Column(Integer, default=0)
+    acos = Column(Float)
+    roas = Column(Float)
+    ctr = Column(Float)
+    cpc = Column(Float)
+    conversion_rate = Column(Float)
+    raw = Column(JSON)
+    created_at = Column(DateTime, default=datetime.utcnow)
