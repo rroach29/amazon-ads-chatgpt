@@ -6,7 +6,7 @@ import time
 from datetime import date, timedelta
 from database import engine, SessionLocal
 from models import Base, DailyDashboard
-
+from apscheduler.schedulers.background import BackgroundScheduler
 
 import requests
 from fastapi import FastAPI, Header, HTTPException
@@ -836,3 +836,25 @@ def collect_dashboard(
         "alerts": alerts,
         "recommendations": recommendations,
     }
+def scheduled_amazon_ads_collection():
+    try:
+        print("Starting scheduled Amazon Ads collection...")
+
+        campaign_report = create_report("campaigns")
+        search_report = create_report("search_terms")
+
+        print("Campaign report:", campaign_report)
+        print("Search term report:", search_report)
+
+    except Exception as e:
+        print("Scheduled collection failed:", str(e))
+
+scheduler = BackgroundScheduler(timezone="America/Regina")
+
+scheduler.add_job(
+    scheduled_amazon_ads_collection,
+    "interval",
+    minutes=5,
+    id="test_amazon_ads_collection",
+    replace_existing=True,
+)
