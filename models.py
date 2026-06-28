@@ -111,3 +111,13 @@ class Recommendation(Base):
     status = Column(String, default="open")
     raw = Column(JSON)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class ScheduledReportJob(Base):
+    __tablename__ = "scheduled_report_jobs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    date = Column(Date, index=True)
+    campaign_report_id = Column(String, index=True)
+    search_term_report_id = Column(String, index=True)
+    status = Column(String, default="PENDING")
+    created_at = Column(DateTime, default=datetime.utcnow)
