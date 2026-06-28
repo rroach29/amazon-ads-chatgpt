@@ -851,10 +851,15 @@ def scheduled_amazon_ads_collection():
 
 scheduler = BackgroundScheduler(timezone="America/Regina")
 
+scheduler = BackgroundScheduler(timezone="America/Regina")
+
 scheduler.add_job(
     scheduled_amazon_ads_collection,
-    "interval",
-    minutes=5,
-    id="test_amazon_ads_collection",
+    "cron",
+    hour=6,
+    minute=0,
+    id="daily_amazon_ads_collection",
     replace_existing=True,
 )
+
+scheduler.start()
