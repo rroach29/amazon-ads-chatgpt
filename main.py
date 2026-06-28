@@ -116,7 +116,7 @@ def get_sp_campaigns(x_api_key: str = Header(...)):
 
     return r.json()
     @app.get("/oauth/callback")
-def oauth_callback(code: str = None, state: str = None):
+    def oauth_callback(code: str = None, state: str = None):
     return {
         "message": "Authorization code received. Copy the code value and exchange it for a refresh token.",
         "code": code,
