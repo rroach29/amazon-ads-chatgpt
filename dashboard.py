@@ -282,8 +282,9 @@ def save_search_term_daily_details(db, search_term_rows, report_date=None):
 
     db.commit()
 
-def get_campaigns(db, limit=100):
+def get_campaigns(limit: int = 100):
     return (
+        db = SessionLocal()
         db.query(CampaignDailyDetail)
         .order_by(CampaignDailyDetail.date.desc(), CampaignDailyDetail.spend.desc())
         .limit(limit)
@@ -291,8 +292,9 @@ def get_campaigns(db, limit=100):
     )
 
 
-def get_top_campaigns(db, limit=25):
+def get_top_campaigns(limit: int = 25):
     return (
+        db = SessionLocal()
         db.query(CampaignDailyDetail)
         .filter(CampaignDailyDetail.sales > 0)
         .order_by(CampaignDailyDetail.sales.desc())
@@ -301,8 +303,9 @@ def get_top_campaigns(db, limit=25):
     )
 
 
-def get_waste_campaigns(db, min_spend=10, limit=25):
+def get_waste_campaigns(min_spend: float = 10, limit: int = 25):
     return (
+        db = SessionLocal()
         db.query(CampaignDailyDetail)
         .filter(CampaignDailyDetail.spend >= min_spend)
         .filter(CampaignDailyDetail.sales == 0)
@@ -312,8 +315,9 @@ def get_waste_campaigns(db, min_spend=10, limit=25):
     )
 
 
-def get_search_terms(db, limit=100):
+def get_search_terms(limit: int = 100):
     return (
+        db = SessionLocal()
         db.query(SearchTermDailyDetail)
         .order_by(SearchTermDailyDetail.date.desc(), SearchTermDailyDetail.spend.desc())
         .limit(limit)
@@ -321,8 +325,9 @@ def get_search_terms(db, limit=100):
     )
 
 
-def get_winning_search_terms(db, max_acos=35, min_orders=1, limit=25):
+def get_winning_search_terms(max_acos: float = 35, min_orders: int = 1, limit: int = 25):
     return (
+        db = SessionLocal()
         db.query(SearchTermDailyDetail)
         .filter(SearchTermDailyDetail.orders >= min_orders)
         .filter(SearchTermDailyDetail.acos <= max_acos)
@@ -332,8 +337,9 @@ def get_winning_search_terms(db, max_acos=35, min_orders=1, limit=25):
     )
 
 
-def get_wasted_search_terms(db, min_spend=10, limit=25):
+def get_wasted_search_terms(min_spend: float = 10, limit: int = 25):
     return (
+        db = SessionLocal()
         db.query(SearchTermDailyDetail)
         .filter(SearchTermDailyDetail.spend >= min_spend)
         .filter(SearchTermDailyDetail.sales == 0)
