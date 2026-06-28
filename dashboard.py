@@ -2,7 +2,7 @@ from datetime import date
 
 from database import SessionLocal
 from models import DailyDashboard, CampaignDailyDetail, SearchTermDailyDetail
-from amazon_ads import download_report_data
+from amazon.reports import download_report_data
 from analytics import build_dashboard_analysis
 
 
