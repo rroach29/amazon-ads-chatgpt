@@ -1,8 +1,7 @@
 from fastapi import APIRouter, Header
 
 from auth import verify_key
-from dashboard import get_latest_dashboard, save_dashboard_from_reports
-
+from dashboard import get_latest_dashboard, save_dashboard_from_reports, get_dashboard_history
 router = APIRouter()
 
 
@@ -20,3 +19,8 @@ def collect_dashboard(
 ):
     verify_key(x_api_key)
     return save_dashboard_from_reports(campaign_report_id, search_term_report_id)
+
+@router.get("/dashboard/history")
+def dashboard_history(days: int = 30, x_api_key: str = Header(...)):
+    verify_key(x_api_key)
+    return get_dashboard_history(days)
