@@ -106,19 +106,23 @@ def get_sp_campaigns(x_api_key: str = Header(...)):
     verify_key(x_api_key)
 
     headers = ads_headers()
+    headers["Accept"] = "application/vnd.spCampaign.v3+json"
+    headers["Content-Type"] = "application/vnd.spCampaign.v3+json"
 
-    r = requests.get(
-        "https://advertising-api.amazon.com/sp/campaigns/list",
+    r = requests.post(
+        f"{ADS_BASE_URL}/sp/campaigns/list",
         headers=headers,
-        json={},
+        json={
+            "maxResults": 100,
+            "includeExtendedDataFields": True
+        },
         timeout=30,
     )
 
-    return {
-        "status": r.status_code,
-        "headers_sent": headers,
-        "body": r.text,
-    }
+    if not r.ok:
+        raise HTTPException(status_code=r.status_code, detail=r.text)
+
+    return r.json()
 
 
 @app.get("/oauth/callback")
