@@ -19,6 +19,11 @@ CHATGPT_API_KEY = os.getenv("CHATGPT_API_KEY")
 TOKEN_URL = "https://api.amazon.com/auth/o2/token"
 ADS_BASE_URL = "https://advertising-api.amazon.com"
 
+LATEST_ANALYSIS = {
+    "campaignReportId": None,
+    "searchTermReportId": None,
+    "createdAt": None,
+}
 
 def verify_key(x_api_key: str):
     if not CHATGPT_API_KEY:
@@ -250,11 +255,29 @@ def create_sp_search_terms_report(x_api_key: str = Header(...)):
 def analyze_ads_account(x_api_key: str = Header(...)):
     verify_key(x_api_key)
 
-    campaign_report = create_report("campaigns")
-    search_report = create_report("search_terms")
+    now = time.time()
 
-    campaign_id = campaign_report.get("reportId")
-    search_id = search_report.get("reportId")
+    campaign_id = LATEST_ANALYSIS.get("campaignReportId")
+    search_id = LATEST_ANALYSIS.get("searchTermReportId")
+    created_at = LATEST_ANALYSIS.get("createdAt")
+
+    reuse_existing = (
+        campaign_id
+        and search_id
+        and created_at
+        and now - created_at < 900
+    )
+
+    if not reuse_existing:
+        campaign_report = create_report("campaigns")
+        search_report = create_report("search_terms")
+
+        campaign_id = campaign_report.get("reportId")
+        search_id = search_report.get("reportId")
+
+        LATEST_ANALYSIS["campaignReportId"] = campaign_id
+        LATEST_ANALYSIS["searchTermReportId"] = search_id
+        LATEST_ANALYSIS["createdAt"] = now
 
     campaign_download = download_report_data(campaign_id)
     search_download = download_report_data(search_id)
@@ -304,6 +327,8 @@ def analyze_ads_account(x_api_key: str = Header(...)):
 
     return {
         "status": "COMPLETED",
+        "campaignReportId": campaign_id,
+        "searchTermReportId": search_id,
         "summary": {
             "campaigns": summarize(campaigns),
             "searchTerms": summarize(search_terms),
@@ -325,8 +350,6 @@ def analyze_ads_account(x_api_key: str = Header(...)):
             "Increase budget on profitable campaigns that are limited by budget.",
         ],
     }
-
-
 @app.get("/reports/{report_id}")
 def get_report_status(report_id: str, x_api_key: str = Header(...)):
     verify_key(x_api_key)
