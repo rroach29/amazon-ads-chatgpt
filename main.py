@@ -5,7 +5,7 @@ import re
 import time
 from datetime import date, timedelta
 from database import engine, SessionLocal
-from models import Base, DailyDashboard
+from models import Base, DailyDashboard, ScheduledReportJob
 from apscheduler.schedulers.background import BackgroundScheduler
 
 import requests
@@ -843,8 +843,23 @@ def scheduled_amazon_ads_collection():
         campaign_report = create_report("campaigns")
         search_report = create_report("search_terms")
 
-        print("Campaign report:", campaign_report)
-        print("Search term report:", search_report)
+        campaign_id = campaign_report.get("reportId")
+        search_id = search_report.get("reportId")
+
+        db = SessionLocal()
+
+        job = ScheduledReportJob(
+            date=date.today(),
+            campaign_report_id=campaign_id,
+            search_term_report_id=search_id,
+            status="PENDING",
+        )
+
+        db.add(job)
+        db.commit()
+        db.close()
+
+        print("Scheduled reports created:", campaign_id, search_id)
 
     except Exception as e:
         print("Scheduled collection failed:", str(e))
