@@ -1,13 +1,14 @@
 from database import SessionLocal
 from models import CampaignDailyDetail, SearchTermDailyDetail, OptimizationQueue
-from datetime import datetime
 
-def make_recommendation(priority, action_type, title, reason, data=None):
+
+def make_recommendation(priority, action_type, title, reason, data=None, confidence=80):
     return {
         "priority": priority,
         "type": action_type,
         "title": title,
         "reason": reason,
+        "confidence": confidence,
         "data": data or {},
     }
 
@@ -37,6 +38,7 @@ def get_pause_campaigns(db, min_spend=25, min_clicks=20):
                 "clicks": row.clicks,
                 "sales": row.sales,
             },
+            90,
         )
         for row in rows
     ]
@@ -68,6 +70,7 @@ def get_scale_campaigns(db, max_acos=25, min_orders=2):
                 "acos": row.acos,
                 "roas": row.roas,
             },
+            75,
         )
         for row in rows
     ]
@@ -102,6 +105,7 @@ def get_negative_search_terms(db, min_spend=15, min_clicks=15):
                 "sales": row.sales,
                 "suggested_negative_match_type": "negative phrase",
             },
+            95,
         )
         for row in rows
     ]
@@ -138,6 +142,7 @@ def get_harvest_keywords(db, max_acos=30, min_orders=2):
                 "acos": row.acos,
                 "suggested_match_type": "exact",
             },
+            80,
         )
         for row in rows
     ]
@@ -173,42 +178,17 @@ def get_reduce_bid_terms(db, min_spend=20, min_acos=70):
                 "acos": row.acos,
                 "suggested_bid_change": "-20%",
             },
+            70,
         )
         for row in rows
     ]
 
 
-def build_recommendations():
+def save_recommendations_to_queue(recommendations):
     db = SessionLocal()
 
     try:
-        recommendations = []
-        recommendations.extend(get_pause_campaigns(db))
-        recommendations.extend(get_negative_search_terms(db))
-        recommendations.extend(get_harvest_keywords(db))
-        recommendations.extend(get_scale_campaigns(db))
-        recommendations.extend(get_reduce_bid_terms(db))
-
-        priority_order = {"HIGH": 1, "MEDIUM": 2, "LOW": 3}
-
-        recommendations.sort(
-            key=lambda r: priority_order.get(r["priority"], 99)
-        )
-
-        return {
-    "status": "OK",
-    "count": len(recommendations),
-    "queue_saved": queue_result["saved"],
-    "recommendations": recommendations,
-}
-
-    finally:
-        db.close()
-        def save_recommendations_to_queue(recommendations):
-    db = SessionLocal()
-
-    try:
-        saved = []
+        saved = 0
 
         for rec in recommendations:
             data = rec.get("data", {})
@@ -240,18 +220,18 @@ def build_recommendations():
                 reason=rec.get("reason"),
                 recommended_action=rec.get("type"),
                 confidence=rec.get("confidence", 80),
-                estimated_monthly_savings=data.get("spend", 0) * 30,
+                estimated_monthly_savings=(data.get("spend") or 0) * 30,
                 payload=rec,
             )
 
             db.add(item)
-            saved.append(item)
+            saved += 1
 
         db.commit()
 
         return {
             "status": "OK",
-            "saved": len(saved),
+            "saved": saved,
         }
 
     except Exception:
@@ -260,3 +240,30 @@ def build_recommendations():
 
     finally:
         db.close()
+
+
+def build_recommendations():
+    db = SessionLocal()
+
+    try:
+        recommendations = []
+        recommendations.extend(get_pause_campaigns(db))
+        recommendations.extend(get_negative_search_terms(db))
+        recommendations.extend(get_harvest_keywords(db))
+        recommendations.extend(get_scale_campaigns(db))
+        recommendations.extend(get_reduce_bid_terms(db))
+
+        priority_order = {"HIGH": 1, "MEDIUM": 2, "LOW": 3}
+        recommendations.sort(key=lambda r: priority_order.get(r["priority"], 99))
+
+    finally:
+        db.close()
+
+    queue_result = save_recommendations_to_queue(recommendations)
+
+    return {
+        "status": "OK",
+        "count": len(recommendations),
+        "queue_saved": queue_result["saved"],
+        "recommendations": recommendations,
+    }
