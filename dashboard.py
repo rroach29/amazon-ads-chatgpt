@@ -108,3 +108,36 @@ def get_latest_dashboard():
         "alerts": latest.alerts,
         "recommendations": latest.recommendations,
     }
+def get_dashboard_history(days: int = 30):
+    db = SessionLocal()
+
+    rows = (
+        db.query(DailyDashboard)
+        .filter(DailyDashboard.channel == "amazon_ads")
+        .order_by(DailyDashboard.date.desc())
+        .limit(days)
+        .all()
+    )
+
+    db.close()
+
+    rows = list(reversed(rows))
+
+    return {
+        "status": "OK",
+        "days": days,
+        "history": [
+            {
+                "date": str(row.date),
+                "spend": row.spend,
+                "sales": row.sales,
+                "acos": row.acos,
+                "roas": row.roas,
+                "clicks": row.clicks,
+                "impressions": row.impressions,
+                "orders": row.orders,
+                "health_score": row.health_score,
+            }
+            for row in rows
+        ],
+    }
