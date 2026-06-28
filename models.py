@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Float, Date, DateTime, Boolean, JSON
+from sqlalchemy import Column, Integer, String, Float, Date, DateTime, Text, JSON
 from database import Base
 
 
@@ -171,3 +171,40 @@ class SearchTermDailyDetail(Base):
     conversion_rate = Column(Float)
     raw = Column(JSON)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class OptimizationQueue(Base):
+    __tablename__ = "optimization_queue"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    channel = Column(String, default="amazon_ads")
+    status = Column(String, default="PENDING")
+
+    priority = Column(String)
+    recommendation_type = Column(String)
+
+    campaign_id = Column(String, nullable=True)
+    campaign_name = Column(String, nullable=True)
+
+    ad_group_id = Column(String, nullable=True)
+    ad_group_name = Column(String, nullable=True)
+
+    search_term = Column(String, nullable=True)
+    keyword = Column(String, nullable=True)
+
+    title = Column(String)
+    reason = Column(Text)
+
+    recommended_action = Column(String)
+    confidence = Column(Float, default=0)
+    estimated_monthly_savings = Column(Float, default=0)
+
+    payload = Column(JSON)
+
+    approved_at = Column(DateTime, nullable=True)
+    rejected_at = Column(DateTime, nullable=True)
+    executed_at = Column(DateTime, nullable=True)
+
+    execution_result = Column(JSON, nullable=True)
