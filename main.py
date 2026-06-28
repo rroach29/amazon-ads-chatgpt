@@ -105,16 +105,20 @@ def get_profiles(x_api_key: str = Header(...)):
 def get_sp_campaigns(x_api_key: str = Header(...)):
     verify_key(x_api_key)
 
+    headers = ads_headers()
+
     r = requests.get(
-        f"{ADS_BASE_URL}/sp/campaigns",
-        headers=ads_headers(),
+        "https://advertising-api.amazon.com/sp/campaigns/list",
+        headers=headers,
+        json={},
         timeout=30,
     )
 
-    if not r.ok:
-        raise HTTPException(status_code=r.status_code, detail=r.text)
-
-    return r.json()
+    return {
+        "status": r.status_code,
+        "headers_sent": headers,
+        "body": r.text,
+    }
 
 
 @app.get("/oauth/callback")
