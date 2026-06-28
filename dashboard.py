@@ -1,7 +1,7 @@
 from datetime import date
 
 from database import SessionLocal
-from models import DailyDashboard
+from models import DailyDashboard, CampaignDailyDetail, SearchTermDailyDetail
 from amazon_ads import download_report_data
 from analytics import build_dashboard_analysis
 
@@ -22,6 +22,63 @@ def save_dashboard_from_reports(campaign_report_id: str, search_term_report_id: 
         campaign_download.get("data", []),
         search_download.get("data", []),
     )
+campaigns = analysis["campaigns"]
+search_terms = analysis["search_terms"]
+
+db.query(CampaignDailyDetail).filter(
+    CampaignDailyDetail.date == today,
+    CampaignDailyDetail.channel == "amazon_ads",
+).delete()
+
+db.query(SearchTermDailyDetail).filter(
+    SearchTermDailyDetail.date == today,
+    SearchTermDailyDetail.channel == "amazon_ads",
+).delete()
+
+for r in campaigns:
+    db.add(CampaignDailyDetail(
+        date=today,
+        channel="amazon_ads",
+        campaign_id=str(r.get("campaignId")),
+        campaign_name=r.get("campaignName"),
+        campaign_status=r.get("campaignStatus"),
+        impressions=r.get("impressions", 0),
+        clicks=r.get("clicks", 0),
+        spend=r.get("spend", 0),
+        sales=r.get("sales", 0),
+        orders=r.get("orders", 0),
+        acos=r.get("acos"),
+        roas=r.get("roas"),
+        ctr=r.get("ctr"),
+        cpc=r.get("cpc"),
+        conversion_rate=r.get("conversionRate"),
+        raw=r,
+    ))
+
+for r in search_terms:
+    db.add(SearchTermDailyDetail(
+        date=today,
+        channel="amazon_ads",
+        campaign_id=str(r.get("campaignId")),
+        campaign_name=r.get("campaignName"),
+        ad_group_id=str(r.get("adGroupId")),
+        ad_group_name=r.get("adGroupName"),
+        keyword_id=str(r.get("keywordId")),
+        keyword=r.get("keyword"),
+        match_type=r.get("matchType"),
+        search_term=r.get("searchTerm"),
+        impressions=r.get("impressions", 0),
+        clicks=r.get("clicks", 0),
+        spend=r.get("spend", 0),
+        sales=r.get("sales", 0),
+        orders=r.get("orders", 0),
+        acos=r.get("acos"),
+        roas=r.get("roas"),
+        ctr=r.get("ctr"),
+        cpc=r.get("cpc"),
+        conversion_rate=r.get("conversionRate"),
+        raw=r,
+    ))
 
     db = SessionLocal()
     today = date.today()
