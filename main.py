@@ -4,11 +4,16 @@ import gzip
 import re
 import time
 from datetime import date, timedelta
+from database import engine, SessionLocal
+from models import Base, DailyDashboard
+
 
 import requests
 from fastapi import FastAPI, Header, HTTPException
 
 app = FastAPI(title="Amazon Ads ChatGPT API")
+
+Base.metadata.create_all(bind=engine)
 
 AMAZON_CLIENT_ID = os.getenv("AMAZON_CLIENT_ID")
 AMAZON_CLIENT_SECRET = os.getenv("AMAZON_CLIENT_SECRET")
@@ -673,4 +678,41 @@ def analyze_completed_reports(
             "campaigns": campaigns,
             "searchTerms": search_terms,
         },
+    }
+@app.get("/dashboard")
+def get_dashboard(x_api_key: str = Header(...)):
+    verify_key(x_api_key)
+
+    db = SessionLocal()
+
+    latest = (
+        db.query(DailyDashboard)
+        .order_by(DailyDashboard.date.desc())
+        .first()
+    )
+
+    db.close()
+
+    if not latest:
+        return {
+            "status": "NO_DATA",
+            "message": "Database is connected, but no dashboard data has been collected yet.",
+        }
+
+    return {
+        "status": "OK",
+        "date": str(latest.date),
+        "channel": latest.channel,
+        "summary": {
+            "spend": latest.spend,
+            "sales": latest.sales,
+            "acos": latest.acos,
+            "roas": latest.roas,
+            "clicks": latest.clicks,
+            "impressions": latest.impressions,
+            "orders": latest.orders,
+            "health_score": latest.health_score,
+        },
+        "alerts": latest.alerts,
+        "recommendations": latest.recommendations,
     }
