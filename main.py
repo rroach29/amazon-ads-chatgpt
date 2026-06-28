@@ -249,6 +249,72 @@ def create_sp_campaign_report(x_api_key: str = Header(...)):
 def create_sp_search_terms_report(x_api_key: str = Header(...)):
     verify_key(x_api_key)
     return create_report("search_terms")
+@app.get("/reports/analyze/{campaign_report_id}/{search_term_report_id}")
+def analyze_completed_reports(
+    campaign_report_id: str,
+    search_term_report_id: str,
+    x_api_key: str = Header(...),
+):
+    verify_key(x_api_key)
+
+    campaign_download = download_report_data(campaign_report_id)
+    search_download = download_report_data(search_term_report_id)
+
+    if not campaign_download.get("ready") or not search_download.get("ready"):
+        return {
+            "status": "PENDING",
+            "message": "One or both reports are not ready yet. Try again shortly.",
+            "campaignReport": {
+                "id": campaign_report_id,
+                "status": campaign_download.get("status"),
+            },
+            "searchTermReport": {
+                "id": search_term_report_id,
+                "status": search_download.get("status"),
+            },
+        }
+
+    campaigns = enrich_rows(campaign_download.get("data", []))
+    search_terms = enrich_rows(search_download.get("data", []))
+
+    return {
+        "status": "COMPLETED",
+        "campaignReportId": campaign_report_id,
+        "searchTermReportId": search_term_report_id,
+        "summary": {
+            "campaigns": summarize(campaigns),
+            "searchTerms": summarize(search_terms),
+        },
+        "alerts": {
+            "highSpendNoSalesCampaigns": sorted(
+                [r for r in campaigns if r["spend"] >= 5 and r["sales"] == 0],
+                key=lambda r: r["spend"],
+                reverse=True,
+            )[:10],
+            "highAcosCampaigns": sorted(
+                [r for r in campaigns if r["acos"] is not None and r["acos"] >= 40],
+                key=lambda r: r["acos"],
+                reverse=True,
+            )[:10],
+            "wastedSearchTerms": sorted(
+                [r for r in search_terms if r["spend"] >= 3 and r["sales"] == 0],
+                key=lambda r: r["spend"],
+                reverse=True,
+            )[:25],
+        },
+        "opportunities": {
+            "bestCampaigns": sorted(
+                [r for r in campaigns if r["sales"] > 0],
+                key=lambda r: r["sales"],
+                reverse=True,
+            )[:10],
+            "strongSearchTerms": sorted(
+                [r for r in search_terms if r["sales"] > 0 and r["roas"] is not None],
+                key=lambda r: r["roas"],
+                reverse=True,
+            )[:25],
+        },
+    }
 
 
 @app.post("/reports/analyze")
