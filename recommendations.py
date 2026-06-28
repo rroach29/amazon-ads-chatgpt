@@ -1,6 +1,6 @@
 from database import SessionLocal
-from models import CampaignDailyDetail, SearchTermDailyDetail
-
+from models import CampaignDailyDetail, SearchTermDailyDetail, OptimizationQueue
+from datetime import datetime
 
 def make_recommendation(priority, action_type, title, reason, data=None):
     return {
@@ -196,10 +196,67 @@ def build_recommendations():
         )
 
         return {
+    "status": "OK",
+    "count": len(recommendations),
+    "queue_saved": queue_result["saved"],
+    "recommendations": recommendations,
+}
+
+    finally:
+        db.close()
+        def save_recommendations_to_queue(recommendations):
+    db = SessionLocal()
+
+    try:
+        saved = []
+
+        for rec in recommendations:
+            data = rec.get("data", {})
+
+            exists = (
+                db.query(OptimizationQueue)
+                .filter(OptimizationQueue.status == "PENDING")
+                .filter(OptimizationQueue.recommendation_type == rec.get("type"))
+                .filter(OptimizationQueue.campaign_id == data.get("campaign_id"))
+                .filter(OptimizationQueue.search_term == data.get("search_term"))
+                .first()
+            )
+
+            if exists:
+                continue
+
+            item = OptimizationQueue(
+                channel="amazon_ads",
+                status="PENDING",
+                priority=rec.get("priority"),
+                recommendation_type=rec.get("type"),
+                campaign_id=data.get("campaign_id"),
+                campaign_name=data.get("campaign_name"),
+                ad_group_id=data.get("ad_group_id"),
+                ad_group_name=data.get("ad_group_name"),
+                search_term=data.get("search_term"),
+                keyword=data.get("keyword"),
+                title=rec.get("title"),
+                reason=rec.get("reason"),
+                recommended_action=rec.get("type"),
+                confidence=rec.get("confidence", 80),
+                estimated_monthly_savings=data.get("spend", 0) * 30,
+                payload=rec,
+            )
+
+            db.add(item)
+            saved.append(item)
+
+        db.commit()
+
+        return {
             "status": "OK",
-            "count": len(recommendations),
-            "recommendations": recommendations,
+            "saved": len(saved),
         }
+
+    except Exception:
+        db.rollback()
+        raise
 
     finally:
         db.close()
