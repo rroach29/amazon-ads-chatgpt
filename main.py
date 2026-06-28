@@ -716,6 +716,18 @@ def get_dashboard(x_api_key: str = Header(...)):
         "alerts": latest.alerts,
         "recommendations": latest.recommendations,
     }
+
+@app.post("/scheduler/run")
+def run_scheduler_now(x_api_key: str = Header(...)):
+    verify_key(x_api_key)
+
+    scheduled_amazon_ads_collection()
+
+    return {
+        "status": "OK",
+        "message": "Scheduler executed successfully."
+    }
+
 @app.post("/dashboard/collect/{campaign_report_id}/{search_term_report_id}")
 def collect_dashboard(
     campaign_report_id: str,
