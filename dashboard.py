@@ -22,66 +22,68 @@ def save_dashboard_from_reports(campaign_report_id: str, search_term_report_id: 
         campaign_download.get("data", []),
         search_download.get("data", []),
     )
-campaigns = analysis["campaigns"]
-search_terms = analysis["search_terms"]
 
-db.query(CampaignDailyDetail).filter(
-    CampaignDailyDetail.date == today,
-    CampaignDailyDetail.channel == "amazon_ads",
-).delete()
-
-db.query(SearchTermDailyDetail).filter(
-    SearchTermDailyDetail.date == today,
-    SearchTermDailyDetail.channel == "amazon_ads",
-).delete()
-
-for r in campaigns:
-    db.add(CampaignDailyDetail(
-        date=today,
-        channel="amazon_ads",
-        campaign_id=str(r.get("campaignId")),
-        campaign_name=r.get("campaignName"),
-        campaign_status=r.get("campaignStatus"),
-        impressions=r.get("impressions", 0),
-        clicks=r.get("clicks", 0),
-        spend=r.get("spend", 0),
-        sales=r.get("sales", 0),
-        orders=r.get("orders", 0),
-        acos=r.get("acos"),
-        roas=r.get("roas"),
-        ctr=r.get("ctr"),
-        cpc=r.get("cpc"),
-        conversion_rate=r.get("conversionRate"),
-        raw=r,
-    ))
-
-for r in search_terms:
-    db.add(SearchTermDailyDetail(
-        date=today,
-        channel="amazon_ads",
-        campaign_id=str(r.get("campaignId")),
-        campaign_name=r.get("campaignName"),
-        ad_group_id=str(r.get("adGroupId")),
-        ad_group_name=r.get("adGroupName"),
-        keyword_id=str(r.get("keywordId")),
-        keyword=r.get("keyword"),
-        match_type=r.get("matchType"),
-        search_term=r.get("searchTerm"),
-        impressions=r.get("impressions", 0),
-        clicks=r.get("clicks", 0),
-        spend=r.get("spend", 0),
-        sales=r.get("sales", 0),
-        orders=r.get("orders", 0),
-        acos=r.get("acos"),
-        roas=r.get("roas"),
-        ctr=r.get("ctr"),
-        cpc=r.get("cpc"),
-        conversion_rate=r.get("conversionRate"),
-        raw=r,
-    ))
+    campaigns = analysis["campaigns"]
+    search_terms = analysis["search_terms"]
+    summary = analysis["summary"]
+    today = date.today()
 
     db = SessionLocal()
-    today = date.today()
+
+    db.query(CampaignDailyDetail).filter(
+        CampaignDailyDetail.date == today,
+        CampaignDailyDetail.channel == "amazon_ads",
+    ).delete()
+
+    db.query(SearchTermDailyDetail).filter(
+        SearchTermDailyDetail.date == today,
+        SearchTermDailyDetail.channel == "amazon_ads",
+    ).delete()
+
+    for r in campaigns:
+        db.add(CampaignDailyDetail(
+            date=today,
+            channel="amazon_ads",
+            campaign_id=str(r.get("campaignId")),
+            campaign_name=r.get("campaignName"),
+            campaign_status=r.get("campaignStatus"),
+            impressions=r.get("impressions", 0),
+            clicks=r.get("clicks", 0),
+            spend=r.get("spend", 0),
+            sales=r.get("sales", 0),
+            orders=r.get("orders", 0),
+            acos=r.get("acos"),
+            roas=r.get("roas"),
+            ctr=r.get("ctr"),
+            cpc=r.get("cpc"),
+            conversion_rate=r.get("conversionRate"),
+            raw=r,
+        ))
+
+    for r in search_terms:
+        db.add(SearchTermDailyDetail(
+            date=today,
+            channel="amazon_ads",
+            campaign_id=str(r.get("campaignId")),
+            campaign_name=r.get("campaignName"),
+            ad_group_id=str(r.get("adGroupId")),
+            ad_group_name=r.get("adGroupName"),
+            keyword_id=str(r.get("keywordId")),
+            keyword=r.get("keyword"),
+            match_type=r.get("matchType"),
+            search_term=r.get("searchTerm"),
+            impressions=r.get("impressions", 0),
+            clicks=r.get("clicks", 0),
+            spend=r.get("spend", 0),
+            sales=r.get("sales", 0),
+            orders=r.get("orders", 0),
+            acos=r.get("acos"),
+            roas=r.get("roas"),
+            ctr=r.get("ctr"),
+            cpc=r.get("cpc"),
+            conversion_rate=r.get("conversionRate"),
+            raw=r,
+        ))
 
     existing = (
         db.query(DailyDashboard)
@@ -91,13 +93,13 @@ for r in search_terms:
     )
 
     if existing:
-        existing.spend = analysis["summary"]["spend"]
-        existing.sales = analysis["summary"]["sales"]
-        existing.acos = analysis["summary"]["acos"]
-        existing.roas = analysis["summary"]["roas"]
-        existing.clicks = analysis["summary"]["clicks"]
-        existing.impressions = analysis["summary"]["impressions"]
-        existing.orders = analysis["summary"]["orders"]
+        existing.spend = summary["spend"]
+        existing.sales = summary["sales"]
+        existing.acos = summary["acos"]
+        existing.roas = summary["roas"]
+        existing.clicks = summary["clicks"]
+        existing.impressions = summary["impressions"]
+        existing.orders = summary["orders"]
         existing.health_score = analysis["health_score"]
         existing.alerts = analysis["alerts"]
         existing.recommendations = analysis["recommendations"]
@@ -105,13 +107,13 @@ for r in search_terms:
         dashboard = DailyDashboard(
             date=today,
             channel="amazon_ads",
-            spend=analysis["summary"]["spend"],
-            sales=analysis["summary"]["sales"],
-            acos=analysis["summary"]["acos"],
-            roas=analysis["summary"]["roas"],
-            clicks=analysis["summary"]["clicks"],
-            impressions=analysis["summary"]["impressions"],
-            orders=analysis["summary"]["orders"],
+            spend=summary["spend"],
+            sales=summary["sales"],
+            acos=summary["acos"],
+            roas=summary["roas"],
+            clicks=summary["clicks"],
+            impressions=summary["impressions"],
+            orders=summary["orders"],
             health_score=analysis["health_score"],
             alerts=analysis["alerts"],
             recommendations=analysis["recommendations"],
@@ -124,7 +126,7 @@ for r in search_terms:
     return {
         "status": "OK",
         "message": "Dashboard collected and saved.",
-        "summary": analysis["summary"],
+        "summary": summary,
         "health_score": analysis["health_score"],
         "alerts": analysis["alerts"],
         "recommendations": analysis["recommendations"],
@@ -165,6 +167,8 @@ def get_latest_dashboard():
         "alerts": latest.alerts,
         "recommendations": latest.recommendations,
     }
+
+
 def get_dashboard_history(days: int = 30):
     db = SessionLocal()
 
