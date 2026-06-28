@@ -11,16 +11,16 @@ app = FastAPI(title="Business OS API")
 
 Base.metadata.create_all(bind=engine)
 
-app.include_router(dashboard_router)
-app.include_router(reports_router)
-app.include_router(scheduler_router)
+app.include_router(dashboard_router, prefix="/dashboard", tags=["Dashboard"])
+app.include_router(reports_router, prefix="/reports", tags=["Reports"])
+app.include_router(scheduler_router, prefix="/scheduler", tags=["Scheduler"])
 
 
 @app.get("/")
 def root():
     return {
         "status": "ok",
-        "message": "Business OS API is running"
+        "message": "Business OS API is running",
     }
 
 
