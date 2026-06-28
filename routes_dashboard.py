@@ -16,13 +16,13 @@ from dashboard import (
 router = APIRouter()
 
 
-@router.get("/dashboard")
+@router.get("")
 def dashboard(x_api_key: str = Header(...)):
     verify_key(x_api_key)
     return get_latest_dashboard()
 
 
-@router.post("/dashboard/collect/{campaign_report_id}/{search_term_report_id}")
+@router.post("/collect/{campaign_report_id}/{search_term_report_id}")
 def collect_dashboard(
     campaign_report_id: str,
     search_term_report_id: str,
@@ -32,25 +32,25 @@ def collect_dashboard(
     return save_dashboard_from_reports(campaign_report_id, search_term_report_id)
 
 
-@router.get("/dashboard/history")
+@router.get("/history")
 def dashboard_history(days: int = 30, x_api_key: str = Header(...)):
     verify_key(x_api_key)
     return get_dashboard_history(days)
 
 
-@router.get("/dashboard/campaigns")
+@router.get("/campaigns")
 def dashboard_campaigns(limit: int = 100, x_api_key: str = Header(...)):
     verify_key(x_api_key)
     return get_campaigns(limit)
 
 
-@router.get("/dashboard/campaigns/top")
+@router.get("/campaigns/top")
 def dashboard_top_campaigns(limit: int = 25, x_api_key: str = Header(...)):
     verify_key(x_api_key)
     return get_top_campaigns(limit)
 
 
-@router.get("/dashboard/campaigns/waste")
+@router.get("/campaigns/waste")
 def dashboard_waste_campaigns(
     min_spend: float = 10,
     limit: int = 25,
@@ -60,13 +60,13 @@ def dashboard_waste_campaigns(
     return get_waste_campaigns(min_spend, limit)
 
 
-@router.get("/dashboard/search-terms")
+@router.get("/search-terms")
 def dashboard_search_terms(limit: int = 100, x_api_key: str = Header(...)):
     verify_key(x_api_key)
     return get_search_terms(limit)
 
 
-@router.get("/dashboard/search-terms/winners")
+@router.get("/search-terms/winners")
 def dashboard_search_term_winners(
     max_acos: float = 35,
     min_orders: int = 1,
@@ -77,7 +77,7 @@ def dashboard_search_term_winners(
     return get_winning_search_terms(max_acos, min_orders, limit)
 
 
-@router.get("/dashboard/search-terms/waste")
+@router.get("/search-terms/waste")
 def dashboard_search_term_waste(
     min_spend: float = 10,
     limit: int = 25,
