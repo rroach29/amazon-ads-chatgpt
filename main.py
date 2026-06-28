@@ -314,3 +314,16 @@ def download_report(report_id: str, x_api_key: str = Header(...)):
         "rows": len(data) if isinstance(data, list) else None,
         "data": data,
     }
+@app.post("/reports/daily-analysis")
+def create_daily_analysis_reports(x_api_key: str = Header(...)):
+    verify_key(x_api_key)
+
+    campaign_report = create_sp_campaign_report(x_api_key)
+    search_terms_report = create_sp_search_terms_report(x_api_key)
+
+    return {
+        "message": "Daily analysis reports created",
+        "campaign_report": campaign_report,
+        "search_terms_report": search_terms_report,
+        "next_step": "Wait 1-3 minutes, then check each report ID and download when COMPLETED.",
+    }
