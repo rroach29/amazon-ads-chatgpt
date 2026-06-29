@@ -21,8 +21,4 @@ def run_dashboard_collection_now(x_api_key: str = Header(...)):
 
     result = scheduled_dashboard_collection()
 
-    return {
-        "status": "OK",
-        "message": "Dashboard collection scheduler executed.",
-        "result": result,
-    }
+    return result

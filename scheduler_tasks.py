@@ -11,17 +11,10 @@ from marketplace_profiles import list_marketplace_profiles
 
 def scheduled_amazon_ads_collection():
     """
-    Business OS v3.3.2
+    Business OS v3.3.3
 
-    Create Sponsored Products reports for every active marketplace profile.
-
-    Before v3.3.2 this job created one campaign report and one search term report
-    using the default Amazon profile.
-
-    Now it:
-    - loads every active marketplace profile
-    - creates campaign + search term reports for each profile
-    - stores each marketplace pair as a ScheduledReportJob
+    Create Sponsored Products reports for every active marketplace profile
+    and store marketplace context on each ScheduledReportJob.
     """
     try:
         print("Starting scheduled multi-market Amazon Ads report creation...")
@@ -76,6 +69,10 @@ def scheduled_amazon_ads_collection():
 
                     job = ScheduledReportJob(
                         date=date.today(),
+                        profile_id=str(profile_id) if profile_id else None,
+                        country_code=str(country_code).upper() if country_code else None,
+                        marketplace=marketplace,
+                        currency=currency,
                         campaign_report_id=campaign_id,
                         search_term_report_id=search_id,
                         status="PENDING",
@@ -164,10 +161,26 @@ def scheduled_dashboard_collection():
 
         db.close()
 
+        results = []
+
         for job in jobs:
             result = save_dashboard_from_reports(
                 job.campaign_report_id,
                 job.search_term_report_id,
+                profile_id=job.profile_id,
+                country_code=job.country_code,
+                marketplace=job.marketplace,
+                currency=job.currency,
+            )
+
+            results.append(
+                {
+                    "job_id": job.id,
+                    "country_code": job.country_code,
+                    "marketplace": job.marketplace,
+                    "profile_id": job.profile_id,
+                    "result": result,
+                }
             )
 
             if result.get("status") == "OK":
@@ -182,8 +195,20 @@ def scheduled_dashboard_collection():
             else:
                 print("Job still pending:", job.id, result)
 
+        return {
+            "status": "OK",
+            "message": "Scheduled dashboard collection checked pending jobs.",
+            "jobs_checked": len(jobs),
+            "results": results,
+        }
+
     except Exception as e:
         print("Scheduled dashboard collection failed:", str(e))
+        return {
+            "status": "ERROR",
+            "message": "Scheduled dashboard collection failed.",
+            "error": str(e),
+        }
 
 
 def start_scheduler():

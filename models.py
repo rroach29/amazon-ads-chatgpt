@@ -81,8 +81,14 @@ class DailyDashboard(Base):
     __tablename__ = "daily_dashboards"
 
     id = Column(Integer, primary_key=True, index=True)
-    date = Column(Date, unique=True, index=True)
+    date = Column(Date, index=True)
     channel = Column(String, index=True)
+
+    profile_id = Column(String, index=True, nullable=True)
+    country_code = Column(String, index=True, nullable=True)
+    marketplace = Column(String, index=True, nullable=True)
+    currency = Column(String, nullable=True)
+
     spend = Column(Float, default=0)
     sales = Column(Float, default=0)
     acos = Column(Float)
@@ -112,15 +118,23 @@ class Recommendation(Base):
     raw = Column(JSON)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+
 class ScheduledReportJob(Base):
     __tablename__ = "scheduled_report_jobs"
 
     id = Column(Integer, primary_key=True, index=True)
     date = Column(Date, index=True)
+
+    profile_id = Column(String, index=True, nullable=True)
+    country_code = Column(String, index=True, nullable=True)
+    marketplace = Column(String, index=True, nullable=True)
+    currency = Column(String, nullable=True)
+
     campaign_report_id = Column(String, index=True)
     search_term_report_id = Column(String, index=True)
     status = Column(String, default="PENDING")
     created_at = Column(DateTime, default=datetime.utcnow)
+
 
 class CampaignDailyDetail(Base):
     __tablename__ = "campaign_daily_details"
@@ -128,6 +142,12 @@ class CampaignDailyDetail(Base):
     id = Column(Integer, primary_key=True, index=True)
     date = Column(Date, index=True)
     channel = Column(String, index=True, default="amazon_ads")
+
+    profile_id = Column(String, index=True, nullable=True)
+    country_code = Column(String, index=True, nullable=True)
+    marketplace = Column(String, index=True, nullable=True)
+    currency = Column(String, nullable=True)
+
     campaign_id = Column(String, index=True)
     campaign_name = Column(String)
     campaign_status = Column(String)
@@ -151,6 +171,12 @@ class SearchTermDailyDetail(Base):
     id = Column(Integer, primary_key=True, index=True)
     date = Column(Date, index=True)
     channel = Column(String, index=True, default="amazon_ads")
+
+    profile_id = Column(String, index=True, nullable=True)
+    country_code = Column(String, index=True, nullable=True)
+    marketplace = Column(String, index=True, nullable=True)
+    currency = Column(String, nullable=True)
+
     campaign_id = Column(String, index=True)
     campaign_name = Column(String)
     ad_group_id = Column(String)
@@ -171,6 +197,7 @@ class SearchTermDailyDetail(Base):
     conversion_rate = Column(Float)
     raw = Column(JSON)
     created_at = Column(DateTime, default=datetime.utcnow)
+
 
 class OptimizationQueue(Base):
     __tablename__ = "optimization_queue"
@@ -208,6 +235,7 @@ class OptimizationQueue(Base):
     executed_at = Column(DateTime, nullable=True)
 
     execution_result = Column(JSON, nullable=True)
+
 
 class DecisionHistory(Base):
     __tablename__ = "decision_history"
