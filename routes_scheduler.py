@@ -10,21 +10,19 @@ router = APIRouter()
 def run_scheduler_now(x_api_key: str = Header(...)):
     verify_key(x_api_key)
 
-    scheduled_amazon_ads_collection()
+    result = scheduled_amazon_ads_collection()
 
-    return {
-        "status": "OK",
-        "message": "Report creation scheduler executed."
-    }
+    return result
 
 
 @router.post("/collect")
 def run_dashboard_collection_now(x_api_key: str = Header(...)):
     verify_key(x_api_key)
 
-    scheduled_dashboard_collection()
+    result = scheduled_dashboard_collection()
 
     return {
         "status": "OK",
-        "message": "Dashboard collection scheduler executed."
+        "message": "Dashboard collection scheduler executed.",
+        "result": result,
     }
