@@ -18,6 +18,8 @@ from routes_decision_history import router as decision_history_router
 from routes_decision_metrics import router as decision_metrics_router
 from routes_execution import router as execution_router
 from routes_learning import router as learning_router
+from routes_forecasting import router as forecasting_router
+
 
 app = FastAPI(title="Business OS API")
 
@@ -38,6 +40,7 @@ app.include_router(decision_history_router, prefix="/business-os/decision-histor
 app.include_router(decision_metrics_router, prefix="/business-os/decision-metrics", tags=["Business OS"])
 app.include_router(execution_router, prefix="/business-os", tags=["Business OS Execution"])
 app.include_router(learning_router, prefix="/business-os/learning", tags=["Business OS Learning"])
+app.include_router(forecasting_router, prefix="/business-os", tags=["Business OS Forecasting"])
 
 
 @app.get("/")
