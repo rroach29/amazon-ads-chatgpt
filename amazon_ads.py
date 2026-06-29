@@ -35,16 +35,102 @@ def get_access_token():
     return response.json()["access_token"]
 
 
-def ads_headers():
+def resolve_profile(profile_id=None, country_code=None):
+    """
+    Resolve the Amazon Advertising profile to use.
+
+    Priority:
+    1. Explicit profile_id
+    2. country_code lookup from marketplace_profiles table
+    3. Existing AMAZON_PROFILE_ID fallback
+
+    This keeps existing US behavior working while enabling CA/MX.
+    """
+    if profile_id:
+        return {
+            "profile_id": str(profile_id),
+            "country_code": country_code,
+            "marketplace": None,
+            "currency": None,
+            "source": "explicit_profile_id",
+        }
+
+    if country_code:
+        try:
+            from marketplace_profiles import get_marketplace_profile
+
+            result = get_marketplace_profile(country_code=country_code)
+
+            if result.get("status") == "OK":
+                profile = result.get("profile", {})
+                return {
+                    "profile_id": str(profile.get("profile_id")),
+                    "country_code": profile.get("country_code"),
+                    "marketplace": profile.get("marketplace"),
+                    "currency": profile.get("currency"),
+                    "source": "marketplace_profiles",
+                }
+
+            raise HTTPException(status_code=404, detail=result.get("message"))
+
+        except HTTPException:
+            raise
+
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to resolve marketplace profile for {country_code}: {exc}",
+            )
+
+    if not AMAZON_PROFILE_ID:
+        raise HTTPException(
+            status_code=500,
+            detail="No Amazon profile configured. Set AMAZON_PROFILE_ID or provide country_code/profile_id.",
+        )
+
     return {
-        "Authorization": f"Bearer {get_access_token()}",
-        "Amazon-Advertising-API-ClientId": AMAZON_CLIENT_ID,
-        "Amazon-Advertising-API-Scope": AMAZON_PROFILE_ID,
+        "profile_id": str(AMAZON_PROFILE_ID),
+        "country_code": "US",
+        "marketplace": "amazon.com",
+        "currency": "USD",
+        "source": "AMAZON_PROFILE_ID",
     }
 
 
-def create_report(report_type: str):
-    headers = ads_headers()
+def ads_headers(profile_id=None, country_code=None):
+    profile = resolve_profile(profile_id=profile_id, country_code=country_code)
+
+    return {
+        "Authorization": f"Bearer {get_access_token()}",
+        "Amazon-Advertising-API-ClientId": AMAZON_CLIENT_ID,
+        "Amazon-Advertising-API-Scope": profile["profile_id"],
+    }
+
+
+def get_profiles():
+    headers = {
+        "Authorization": f"Bearer {get_access_token()}",
+        "Amazon-Advertising-API-ClientId": AMAZON_CLIENT_ID,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+
+    response = requests.get(
+        f"{ADS_BASE_URL}/v2/profiles",
+        headers=headers,
+        timeout=30,
+    )
+
+    if not response.ok:
+        raise HTTPException(status_code=response.status_code, detail=response.text)
+
+    return response.json()
+
+
+def create_report(report_type: str, profile_id=None, country_code=None):
+    profile = resolve_profile(profile_id=profile_id, country_code=country_code)
+
+    headers = ads_headers(profile_id=profile["profile_id"])
     headers["Accept"] = "application/vnd.createasyncreportrequest.v3+json"
     headers["Content-Type"] = "application/vnd.createasyncreportrequest.v3+json"
 
@@ -52,9 +138,11 @@ def create_report(report_type: str):
     start_date = end_date - timedelta(days=29)
     timestamp = int(time.time())
 
+    profile_label = profile.get("country_code") or profile.get("profile_id")
+
     if report_type == "campaigns":
         config = {
-            "name": f"SP Campaign Performance {timestamp}",
+            "name": f"SP Campaign Performance {profile_label} {timestamp}",
             "reportTypeId": "spCampaigns",
             "groupBy": ["campaign"],
             "columns": [
@@ -65,7 +153,7 @@ def create_report(report_type: str):
         }
     elif report_type == "search_terms":
         config = {
-            "name": f"SP Search Term Performance {timestamp}",
+            "name": f"SP Search Term Performance {profile_label} {timestamp}",
             "reportTypeId": "spSearchTerm",
             "groupBy": ["searchTerm"],
             "columns": [
@@ -105,15 +193,23 @@ def create_report(report_type: str):
             response.text,
         )
         if match:
-            return {"reportId": match.group(0), "status": "DUPLICATE_REUSED"}
+            return {
+                "reportId": match.group(0),
+                "status": "DUPLICATE_REUSED",
+                "profile": profile,
+            }
 
         raise HTTPException(status_code=response.status_code, detail=response.text)
 
-    return response.json()
+    data = response.json()
+    data["profile"] = profile
+    return data
 
 
-def get_report_status(report_id: str):
-    headers = ads_headers()
+def get_report_status(report_id: str, profile_id=None, country_code=None):
+    profile = resolve_profile(profile_id=profile_id, country_code=country_code)
+
+    headers = ads_headers(profile_id=profile["profile_id"])
     headers["Accept"] = "application/vnd.getasyncreportresponse.v3+json"
 
     response = requests.get(
@@ -125,11 +221,17 @@ def get_report_status(report_id: str):
     if not response.ok:
         raise HTTPException(status_code=response.status_code, detail=response.text)
 
-    return response.json()
+    data = response.json()
+    data["profile"] = profile
+    return data
 
 
-def download_report_data(report_id: str):
-    report_info = get_report_status(report_id)
+def download_report_data(report_id: str, profile_id=None, country_code=None):
+    profile = resolve_profile(profile_id=profile_id, country_code=country_code)
+    report_info = get_report_status(
+        report_id,
+        profile_id=profile["profile_id"],
+    )
 
     if report_info.get("status") != "COMPLETED":
         return {
@@ -137,6 +239,7 @@ def download_report_data(report_id: str):
             "status": report_info.get("status"),
             "data": [],
             "report": report_info,
+            "profile": profile,
         }
 
     report_url = report_info.get("url")
@@ -156,4 +259,5 @@ def download_report_data(report_id: str):
         "status": "COMPLETED",
         "rows": len(data) if isinstance(data, list) else None,
         "data": data,
+        "profile": profile,
     }

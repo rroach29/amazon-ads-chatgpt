@@ -7,27 +7,58 @@ router = APIRouter()
 
 
 @router.post("/sp-campaigns")
-def create_sp_campaign_report(x_api_key: str = Header(...)):
+def create_sp_campaign_report(
+    country_code: str | None = None,
+    profile_id: str | None = None,
+    x_api_key: str = Header(...),
+):
     verify_key(x_api_key)
-    return create_report("campaigns")
+    return create_report(
+        "campaigns",
+        country_code=country_code,
+        profile_id=profile_id,
+    )
 
 
 @router.post("/sp-search-terms")
-def create_sp_search_terms_report(x_api_key: str = Header(...)):
+def create_sp_search_terms_report(
+    country_code: str | None = None,
+    profile_id: str | None = None,
+    x_api_key: str = Header(...),
+):
     verify_key(x_api_key)
-    return create_report("search_terms")
+    return create_report(
+        "search_terms",
+        country_code=country_code,
+        profile_id=profile_id,
+    )
 
 
 @router.post("/analyze")
-def analyze_amazon_ads_account(x_api_key: str = Header(...)):
+def analyze_amazon_ads_account(
+    country_code: str | None = None,
+    profile_id: str | None = None,
+    x_api_key: str = Header(...),
+):
     verify_key(x_api_key)
 
-    campaign_report = create_report("campaigns")
-    search_report = create_report("search_terms")
+    campaign_report = create_report(
+        "campaigns",
+        country_code=country_code,
+        profile_id=profile_id,
+    )
+
+    search_report = create_report(
+        "search_terms",
+        country_code=country_code,
+        profile_id=profile_id,
+    )
 
     return {
         "status": "PENDING",
         "message": "Reports created. Wait 1-3 minutes, then collect the dashboard.",
+        "country_code": country_code,
+        "profile_id": profile_id,
         "campaignReportId": campaign_report.get("reportId"),
         "searchTermReportId": search_report.get("reportId"),
         "campaignReport": campaign_report,
@@ -36,11 +67,30 @@ def analyze_amazon_ads_account(x_api_key: str = Header(...)):
 
 
 @router.get("/{report_id}")
-def report_status(report_id: str, x_api_key: str = Header(...)):
+def report_status(
+    report_id: str,
+    country_code: str | None = None,
+    profile_id: str | None = None,
+    x_api_key: str = Header(...),
+):
     verify_key(x_api_key)
-    return get_report_status(report_id)
+    return get_report_status(
+        report_id,
+        country_code=country_code,
+        profile_id=profile_id,
+    )
+
 
 @router.get("/{report_id}/download")
-def download_report(report_id: str, x_api_key: str = Header(...)):
+def download_report(
+    report_id: str,
+    country_code: str | None = None,
+    profile_id: str | None = None,
+    x_api_key: str = Header(...),
+):
     verify_key(x_api_key)
-    return download_report_data(report_id)
+    return download_report_data(
+        report_id,
+        country_code=country_code,
+        profile_id=profile_id,
+    )
