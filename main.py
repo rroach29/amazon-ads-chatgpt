@@ -15,6 +15,7 @@ from routes_intelligence import router as intelligence_router
 from routes_root_cause import router as root_cause_router
 from routes_decisions import router as decisions_router
 from routes_decision_history import router as decision_history_router
+from routes_decision_metrics import router as decision_metrics_router
 
 app = FastAPI(title="Business OS API")
 
@@ -32,6 +33,7 @@ app.include_router(intelligence_router, prefix="/business-os/intelligence", tags
 app.include_router(root_cause_router, prefix="/business-os/root-cause", tags=["Business OS"])
 app.include_router(decisions_router, prefix="/business-os/decisions", tags=["Business OS"])
 app.include_router(decision_history_router, prefix="/business-os/decision-history", tags=["Business OS"])
+app.include_router(decision_metrics_router, prefix="/business-os/decision-metrics", tags=["Business OS"])
 
 @app.get("/")
 def root():
