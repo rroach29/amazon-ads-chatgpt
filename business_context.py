@@ -31,7 +31,7 @@ def get_business_os_context():
     return {
         "status": "OK",
         "dashboard": get_latest_dashboard(),
-
+        "open_decisions": get_decision_history(status="OPEN", limit=20),
         "history": history,
 
         "top_campaigns": trim_list(
