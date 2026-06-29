@@ -19,7 +19,8 @@ from routes_decision_metrics import router as decision_metrics_router
 from routes_execution import router as execution_router
 from routes_learning import router as learning_router
 from routes_forecasting import router as forecasting_router
-
+from routes_marketplace_profiles import router as marketplace_profiles_router
+from routes_profiles import router as profiles_router
 
 app = FastAPI(title="Business OS API")
 
@@ -41,7 +42,8 @@ app.include_router(decision_metrics_router, prefix="/business-os/decision-metric
 app.include_router(execution_router, prefix="/business-os", tags=["Business OS Execution"])
 app.include_router(learning_router, prefix="/business-os/learning", tags=["Business OS Learning"])
 app.include_router(forecasting_router, prefix="/business-os", tags=["Business OS Forecasting"])
-
+app.include_router(marketplace_profiles_router, prefix="/business-os", tags=["Business OS Marketplace Profiles"])
+app.include_router(profiles_router, prefix="/profiles", tags=["Amazon Ads Profiles"])
 
 @app.get("/")
 def root():
