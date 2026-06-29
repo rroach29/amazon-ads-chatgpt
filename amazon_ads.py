@@ -112,6 +112,21 @@ def create_report(report_type: str):
     return response.json()
 
 
+    if not response.ok:
+        raise HTTPException(status_code=response.status_code, detail=response.text)
+
+    return response.json()
+
+def get_profiles():
+    headers = ads_headers()
+    headers["Content-Type"] = "application/json"
+
+    response = requests.get(
+        f"{ADS_BASE_URL}/v2/profiles",
+        headers=headers,
+        timeout=30,
+    )
+
 def get_report_status(report_id: str):
     headers = ads_headers()
     headers["Accept"] = "application/vnd.getasyncreportresponse.v3+json"
