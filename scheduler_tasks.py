@@ -6,35 +6,148 @@ from database import SessionLocal
 from models import ScheduledReportJob
 from amazon_ads import create_report
 from dashboard import save_dashboard_from_reports
+from marketplace_profiles import list_marketplace_profiles
 
 
 def scheduled_amazon_ads_collection():
+    """
+    Business OS v3.3.2
+
+    Create Sponsored Products reports for every active marketplace profile.
+
+    Before v3.3.2 this job created one campaign report and one search term report
+    using the default Amazon profile.
+
+    Now it:
+    - loads every active marketplace profile
+    - creates campaign + search term reports for each profile
+    - stores each marketplace pair as a ScheduledReportJob
+    """
     try:
-        print("Starting scheduled Amazon Ads report creation...")
+        print("Starting scheduled multi-market Amazon Ads report creation...")
 
-        campaign_report = create_report("campaigns")
-        search_report = create_report("search_terms")
+        profiles_response = list_marketplace_profiles(active_only=True)
+        profiles = profiles_response.get("items", [])
 
-        campaign_id = campaign_report.get("reportId")
-        search_id = search_report.get("reportId")
+        if not profiles:
+            print("No active marketplace profiles found. Scheduled report creation skipped.")
+            return {
+                "status": "SKIPPED",
+                "message": "No active marketplace profiles found.",
+                "profiles_processed": 0,
+                "jobs_created": 0,
+            }
+
+        print(f"Found {len(profiles)} active marketplace profile(s).")
 
         db = SessionLocal()
+        jobs_created = []
+        failed_profiles = []
 
-        job = ScheduledReportJob(
-            date=date.today(),
-            campaign_report_id=campaign_id,
-            search_term_report_id=search_id,
-            status="PENDING",
-        )
+        try:
+            for profile in profiles:
+                country_code = profile.get("country_code")
+                profile_id = profile.get("profile_id")
+                marketplace = profile.get("marketplace")
+                currency = profile.get("currency")
 
-        db.add(job)
-        db.commit()
-        db.close()
+                print(
+                    "Creating scheduled reports for "
+                    f"country_code={country_code}, "
+                    f"marketplace={marketplace}, "
+                    f"profile_id={profile_id}"
+                )
 
-        print("Scheduled reports created:", campaign_id, search_id)
+                try:
+                    campaign_report = create_report(
+                        "campaigns",
+                        country_code=country_code,
+                        profile_id=profile_id,
+                    )
+
+                    search_report = create_report(
+                        "search_terms",
+                        country_code=country_code,
+                        profile_id=profile_id,
+                    )
+
+                    campaign_id = campaign_report.get("reportId")
+                    search_id = search_report.get("reportId")
+
+                    job = ScheduledReportJob(
+                        date=date.today(),
+                        campaign_report_id=campaign_id,
+                        search_term_report_id=search_id,
+                        status="PENDING",
+                    )
+
+                    db.add(job)
+                    db.commit()
+                    db.refresh(job)
+
+                    jobs_created.append(
+                        {
+                            "job_id": job.id,
+                            "country_code": country_code,
+                            "marketplace": marketplace,
+                            "currency": currency,
+                            "profile_id": profile_id,
+                            "campaign_report_id": campaign_id,
+                            "search_term_report_id": search_id,
+                        }
+                    )
+
+                    print(
+                        "Scheduled reports created:",
+                        f"job_id={job.id}",
+                        f"country_code={country_code}",
+                        f"campaign_report_id={campaign_id}",
+                        f"search_term_report_id={search_id}",
+                    )
+
+                except Exception as profile_error:
+                    db.rollback()
+
+                    failed_profiles.append(
+                        {
+                            "country_code": country_code,
+                            "marketplace": marketplace,
+                            "profile_id": profile_id,
+                            "error": str(profile_error),
+                        }
+                    )
+
+                    print(
+                        "Scheduled report creation failed for "
+                        f"country_code={country_code}, "
+                        f"profile_id={profile_id}: {profile_error}"
+                    )
+
+        finally:
+            db.close()
+
+        status = "OK" if not failed_profiles else "PARTIAL_SUCCESS"
+
+        result = {
+            "status": status,
+            "message": "Scheduled multi-market Amazon Ads report creation completed.",
+            "profiles_processed": len(profiles),
+            "jobs_created": len(jobs_created),
+            "failed_profiles": len(failed_profiles),
+            "jobs": jobs_created,
+            "failures": failed_profiles,
+        }
+
+        print("Scheduled multi-market report creation result:", result)
+        return result
 
     except Exception as e:
         print("Scheduled collection failed:", str(e))
+        return {
+            "status": "ERROR",
+            "message": "Scheduled multi-market Amazon Ads report creation failed.",
+            "error": str(e),
+        }
 
 
 def scheduled_dashboard_collection():
