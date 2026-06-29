@@ -1,12 +1,9 @@
+from amazon.campaigns import pause_campaign
+
+
 def execute_pause_campaign(decision):
     payload = decision.payload or {}
-
-    return {
-        "status": "SIMULATED",
-        "decision": decision.decision,
-        "message": f"Would pause campaign: {payload.get('campaign_name')}",
-        "payload": payload,
-    }
+    return pause_campaign(payload)
 
 
 def execute_add_negative_keyword(decision):
