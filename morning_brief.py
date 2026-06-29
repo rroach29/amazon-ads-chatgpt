@@ -3,6 +3,8 @@ from trends import build_trend_summary
 from decision_history import get_decision_history
 from decision_metrics import get_decision_metrics
 from ai.decision_engine import build_decisions
+from marketplace_summary import build_marketplace_summary, compare_marketplaces
+
 
 def get_metric(summary, key, default=0):
     try:
@@ -96,13 +98,23 @@ def summarize_pause_decision(decision):
     }
 
 
-def build_morning_brief():
+def build_morning_brief(country_code=None, profile_id=None, compare_to="US"):
     context = get_business_os_context()
     trends = build_trend_summary(days=14)
+
+    marketplace_summary = build_marketplace_summary()
+    marketplace_comparison = None
+
+    if country_code and compare_to:
+        marketplace_comparison = compare_marketplaces(
+            primary_country_code=country_code,
+            comparison_country_code=compare_to,
+        )
 
     open_decisions = get_decision_history(status="OPEN", limit=50)
     decision_items = open_decisions.get("items", [])
     decision_build_result = build_decisions()
+
     pause_decisions = filter_decisions_by_type(
         decision_items,
         "PAUSE_CAMPAIGN",
@@ -174,12 +186,17 @@ def build_morning_brief():
         "status": "OK",
         "title": "Amazon Ads Morning Brief",
         "dashboard_date": dashboard.get("date"),
+
+        "marketplace_summary": marketplace_summary,
+        "marketplace_comparison": marketplace_comparison,
+
         "decision_build": {
             "status": decision_build_result.get("status"),
             "count": decision_build_result.get("count"),
             "history_saved": decision_build_result.get("history_saved"),
             "breakdown": decision_build_result.get("breakdown"),
         },
+
         "executive_summary": {
             "open_decisions": len(decision_items),
             "pause_campaign_decisions": len(pause_decisions),
@@ -189,6 +206,12 @@ def build_morning_brief():
                 decision_estimated_monthly_impact,
                 2,
             ),
+            "combined_marketplace_sales": marketplace_summary.get("combined", {}).get("sales"),
+            "combined_marketplace_spend": marketplace_summary.get("combined", {}).get("spend"),
+            "combined_marketplace_roas": marketplace_summary.get("combined", {}).get("roas"),
+            "best_marketplace_by_sales": marketplace_summary.get("best_by_sales"),
+            "best_marketplace_by_roas": marketplace_summary.get("best_by_roas"),
+            "marketplace_needing_attention": marketplace_summary.get("needs_attention"),
             "top_priority": get_top_priority(
                 decision_items,
                 high_priority,
@@ -278,6 +301,7 @@ def build_morning_brief():
             pause_decisions=pause_decisions,
             negative_keyword_decisions=negative_keyword_decisions,
             harvest_keyword_decisions=harvest_keyword_decisions,
+            marketplace_summary=marketplace_summary,
         ),
     }
 
@@ -350,12 +374,28 @@ def build_focus_list(
     pause_decisions=None,
     negative_keyword_decisions=None,
     harvest_keyword_decisions=None,
+    marketplace_summary=None,
 ):
     focus = []
 
     pause_decisions = pause_decisions or []
     negative_keyword_decisions = negative_keyword_decisions or []
     harvest_keyword_decisions = harvest_keyword_decisions or []
+
+    marketplace_summary = marketplace_summary or {}
+    needs_attention = marketplace_summary.get("needs_attention")
+
+    if needs_attention:
+        focus.append({
+            "priority": "HIGH",
+            "focus": "Review marketplace needing attention",
+            "reason": (
+                f"{needs_attention.get('country_code')} / "
+                f"{needs_attention.get('marketplace')} has the weakest current "
+                "health score among active marketplaces."
+            ),
+            "marketplace": needs_attention,
+        })
 
     if pause_decisions:
         top = pause_decisions[0]
