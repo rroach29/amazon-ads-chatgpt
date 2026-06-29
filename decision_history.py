@@ -35,14 +35,24 @@ def save_decisions_to_history(decisions):
         for decision in decisions:
             payload = decision.get("payload", {})
 
-            exists = (
-                db.query(DecisionHistory)
-                .filter(DecisionHistory.status == "OPEN")
-                .filter(DecisionHistory.decision == decision.get("decision"))
-                .filter(DecisionHistory.payload["campaign_id"].astext == str(payload.get("campaign_id")))
-                .filter(DecisionHistory.payload["search_term"].astext == str(payload.get("search_term")))
-                .first()
-            )
+           open_items = (
+    db.query(DecisionHistory)
+    .filter(DecisionHistory.status == "OPEN")
+    .filter(DecisionHistory.decision == decision.get("decision"))
+    .all()
+)
+
+exists = False
+
+for item in open_items:
+    existing_payload = item.payload or {}
+
+    if (
+        str(existing_payload.get("campaign_id")) == str(payload.get("campaign_id"))
+        and str(existing_payload.get("search_term")) == str(payload.get("search_term"))
+    ):
+        exists = True
+        break
 
             if exists:
                 continue
