@@ -22,6 +22,7 @@ from routes_forecasting import router as forecasting_router
 from routes_marketplace_profiles import router as marketplace_profiles_router
 from routes_profiles import router as profiles_router
 from routes_admin import router as admin_router
+from routes_gpt import router as gpt_router
 
 app = FastAPI(title="Business OS API")
 
@@ -46,6 +47,7 @@ app.include_router(forecasting_router, prefix="/business-os", tags=["Business OS
 app.include_router(marketplace_profiles_router, prefix="/business-os", tags=["Business OS Marketplace Profiles"])
 app.include_router(profiles_router, prefix="/profiles", tags=["Amazon Ads Profiles"])
 app.include_router(admin_router, prefix="/admin", tags=["Admin"])
+app.include_router(gpt_router, prefix="/gpt", tags=["GPT Optimized"])
 
 @app.get("/")
 def root():
