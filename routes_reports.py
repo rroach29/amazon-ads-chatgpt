@@ -6,19 +6,19 @@ from amazon_ads import create_report, get_report_status, download_report_data
 router = APIRouter()
 
 
-@router.post("/reports/sp-campaigns")
+@router.post("/sp-campaigns")
 def create_sp_campaign_report(x_api_key: str = Header(...)):
     verify_key(x_api_key)
     return create_report("campaigns")
 
 
-@router.post("/reports/sp-search-terms")
+@router.post("/sp-search-terms")
 def create_sp_search_terms_report(x_api_key: str = Header(...)):
     verify_key(x_api_key)
     return create_report("search_terms")
 
 
-@router.post("/reports/analyze")
+@router.post("/analyze")
 def analyze_amazon_ads_account(x_api_key: str = Header(...)):
     verify_key(x_api_key)
 
@@ -35,13 +35,12 @@ def analyze_amazon_ads_account(x_api_key: str = Header(...)):
     }
 
 
-@router.get("/reports/{report_id}")
+@router.get("/{report_id}")
 def report_status(report_id: str, x_api_key: str = Header(...)):
     verify_key(x_api_key)
     return get_report_status(report_id)
 
-
-@router.get("/reports/{report_id}/download")
+@router.get("/{report_id}/download")
 def download_report(report_id: str, x_api_key: str = Header(...)):
     verify_key(x_api_key)
     return download_report_data(report_id)
