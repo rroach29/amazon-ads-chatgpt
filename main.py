@@ -10,6 +10,7 @@ from routes_recommendations import router as recommendations_router
 from routes_optimization_queue import router as optimization_queue_router
 from routes_business_context import router as business_context_router
 from routes_trends import router as trends_router
+from routes_morning_brief import router as morning_brief_router
 
 app = FastAPI(title="Business OS API")
 
@@ -22,6 +23,7 @@ app.include_router(recommendations_router, prefix="/recommendations", tags=["Rec
 app.include_router(optimization_queue_router,prefix="/optimization-queue",tags=["Optimization Queue"])
 app.include_router(business_context_router, prefix="/business-os", tags=["Business OS"])
 app.include_router(trends_router, prefix="/business-os/trends", tags=["Business OS"])
+app.include_router(morning_brief_router, prefix="/business-os/morning-brief", tags=["Business OS"])
 
 @app.get("/")
 def root():
