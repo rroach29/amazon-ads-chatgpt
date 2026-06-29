@@ -44,6 +44,8 @@ ALTER TABLE daily_dashboards
 ALTER TABLE daily_dashboards
     DROP CONSTRAINT IF EXISTS daily_dashboards_date_key;
 
+DROP INDEX IF EXISTS ix_daily_dashboards_date;
+
 CREATE INDEX IF NOT EXISTS ix_scheduled_report_jobs_profile_id ON scheduled_report_jobs(profile_id);
 CREATE INDEX IF NOT EXISTS ix_scheduled_report_jobs_country_code ON scheduled_report_jobs(country_code);
 
@@ -99,6 +101,18 @@ ALTER TABLE daily_dashboards
     DROP COLUMN IF EXISTS currency;
 
 DELETE FROM schema_migrations WHERE version = 'v3.3.3';
+"""
+
+
+REPAIR_DAILY_DASHBOARD_INDEX_SQL = """
+ALTER TABLE daily_dashboards
+    DROP CONSTRAINT IF EXISTS daily_dashboards_date_key;
+
+DROP INDEX IF EXISTS ix_daily_dashboards_date;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_daily_dashboards_date_profile
+ON daily_dashboards(date, profile_id)
+WHERE profile_id IS NOT NULL;
 """
 
 
@@ -204,6 +218,31 @@ def get_database_schema():
         db.close()
 
 
+def get_daily_dashboard_indexes():
+    db = SessionLocal()
+    try:
+        rows = db.execute(
+            text(
+                """
+                SELECT indexname, indexdef
+                FROM pg_indexes
+                WHERE schemaname = 'public'
+                  AND tablename = 'daily_dashboards'
+                ORDER BY indexname;
+                """
+            )
+        ).fetchall()
+
+        return {
+            "status": "OK",
+            "table": "daily_dashboards",
+            "indexes": [_row_to_dict(row) for row in rows],
+        }
+
+    finally:
+        db.close()
+
+
 def migrate_v3_3_3_marketplace_storage():
     db = SessionLocal()
     try:
@@ -270,6 +309,67 @@ def migrate_v3_3_3_marketplace_storage():
             "message": "Migration v3.3.3 failed.",
             "error": str(exc),
         }
+    finally:
+        db.close()
+
+
+def repair_daily_dashboard_marketplace_index():
+    """
+    Business OS v3.3.3b
+
+    Repairs old date-only uniqueness on daily_dashboards.
+
+    Required because older SQLAlchemy created a unique index named:
+        ix_daily_dashboards_date
+
+    Multi-market storage requires:
+        ux_daily_dashboards_date_profile on (date, profile_id)
+    """
+    db = SessionLocal()
+
+    try:
+        before = db.execute(
+            text(
+                """
+                SELECT indexname, indexdef
+                FROM pg_indexes
+                WHERE schemaname = 'public'
+                  AND tablename = 'daily_dashboards'
+                ORDER BY indexname;
+                """
+            )
+        ).fetchall()
+
+        db.execute(text(REPAIR_DAILY_DASHBOARD_INDEX_SQL))
+        db.commit()
+
+        after = db.execute(
+            text(
+                """
+                SELECT indexname, indexdef
+                FROM pg_indexes
+                WHERE schemaname = 'public'
+                  AND tablename = 'daily_dashboards'
+                ORDER BY indexname;
+                """
+            )
+        ).fetchall()
+
+        return {
+            "status": "OK",
+            "message": "daily_dashboards marketplace-aware index repaired.",
+            "before": [_row_to_dict(row) for row in before],
+            "after": [_row_to_dict(row) for row in after],
+        }
+
+    except Exception as exc:
+        db.rollback()
+        return {
+            "status": "ERROR",
+            "message": "daily_dashboards index repair failed.",
+            "error": str(exc),
+        }
+
     finally:
         db.close()
 
