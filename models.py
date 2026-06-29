@@ -208,3 +208,32 @@ class OptimizationQueue(Base):
     executed_at = Column(DateTime, nullable=True)
 
     execution_result = Column(JSON, nullable=True)
+
+class DecisionHistory(Base):
+    __tablename__ = "decision_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    evaluated_at = Column(DateTime, nullable=True)
+
+    channel = Column(String, index=True, default="amazon_ads")
+
+    decision = Column(String, index=True)
+    priority = Column(String, index=True)
+    confidence = Column(Float, default=0)
+    risk = Column(String)
+
+    recommended_action = Column(String)
+    reasoning = Column(JSON)
+    payload = Column(JSON)
+
+    estimated_monthly_impact = Column(Float, default=0)
+
+    status = Column(String, index=True, default="OPEN")
+    outcome = Column(String, nullable=True)
+
+    actual_impact = Column(Float, nullable=True)
+    was_correct = Column(Boolean, nullable=True)
+
+    notes = Column(Text, nullable=True)
