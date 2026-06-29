@@ -2,6 +2,7 @@ from fastapi import FastAPI
 
 from database import engine
 from models import Base
+from execution_models import ExecutionJob, ExecutionResult
 from routes_dashboard import router as dashboard_router
 from routes_reports import router as reports_router
 from routes_scheduler import router as scheduler_router
@@ -23,6 +24,7 @@ from routes_marketplace_profiles import router as marketplace_profiles_router
 from routes_profiles import router as profiles_router
 from routes_admin import router as admin_router
 from routes_gpt import router as gpt_router
+from routes_execution_v34 import router as execution_v34_router
 
 app = FastAPI(title="Business OS API")
 
@@ -42,6 +44,7 @@ app.include_router(decisions_router, prefix="/business-os/decisions", tags=["Bus
 app.include_router(decision_history_router, prefix="/business-os/decision-history", tags=["Business OS"])
 app.include_router(decision_metrics_router, prefix="/business-os/decision-metrics", tags=["Business OS"])
 app.include_router(execution_router, prefix="/business-os", tags=["Business OS Execution"])
+app.include_router(execution_v34_router, prefix="/business-os", tags=["Business OS Execution v3.4"])
 app.include_router(learning_router, prefix="/business-os/learning", tags=["Business OS Learning"])
 app.include_router(forecasting_router, prefix="/business-os", tags=["Business OS Forecasting"])
 app.include_router(marketplace_profiles_router, prefix="/business-os", tags=["Business OS Marketplace Profiles"])
