@@ -1,6 +1,6 @@
 from database import SessionLocal
 from models import CampaignDailyDetail, SearchTermDailyDetail
-
+from decision_history import save_decisions_to_history
 
 def make_decision(
     decision,
@@ -244,9 +244,12 @@ def build_decisions():
         )
     )
 
+    history_result = save_decisions_to_history(decisions)
+
     return {
         "status": "OK",
         "count": len(decisions),
+        "history_saved": history_result["saved"],
         "breakdown": {
             "pause_campaigns": pause_decisions["count"],
             "negative_keywords": negative_decisions["count"],
