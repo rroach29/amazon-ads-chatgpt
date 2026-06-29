@@ -33,26 +33,29 @@ def save_decisions_to_history(decisions):
         saved = 0
 
         for decision in decisions:
+
             payload = decision.get("payload", {})
 
-           open_items = (
-    db.query(DecisionHistory)
-    .filter(DecisionHistory.status == "OPEN")
-    .filter(DecisionHistory.decision == decision.get("decision"))
-    .all()
-)
+            open_items = (
+                db.query(DecisionHistory)
+                .filter(DecisionHistory.status == "OPEN")
+                .filter(DecisionHistory.decision == decision.get("decision"))
+                .all()
+            )
 
-exists = False
+            exists = False
 
-for item in open_items:
-    existing_payload = item.payload or {}
+            for item in open_items:
+                existing_payload = item.payload or {}
 
-    if (
-        str(existing_payload.get("campaign_id")) == str(payload.get("campaign_id"))
-        and str(existing_payload.get("search_term")) == str(payload.get("search_term"))
-    ):
-        exists = True
-        break
+                if (
+                    str(existing_payload.get("campaign_id"))
+                    == str(payload.get("campaign_id"))
+                    and str(existing_payload.get("search_term"))
+                    == str(payload.get("search_term"))
+                ):
+                    exists = True
+                    break
 
             if exists:
                 continue
@@ -66,7 +69,7 @@ for item in open_items:
                 recommended_action=decision.get("recommended_action"),
                 reasoning=decision.get("reasoning"),
                 payload=payload,
-                estimated_monthly_impact=decision.get("estimated_monthly_impact") or 0,
+                estimated_monthly_impact=decision.get("estimated_monthly_impact", 0),
                 status="OPEN",
             )
 
