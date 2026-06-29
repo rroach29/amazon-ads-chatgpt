@@ -13,6 +13,7 @@ from routes_trends import router as trends_router
 from routes_morning_brief import router as morning_brief_router
 from routes_intelligence import router as intelligence_router
 from routes_root_cause import router as root_cause_router
+from routes_decisions import router as decisions_router
 
 app = FastAPI(title="Business OS API")
 
@@ -28,6 +29,7 @@ app.include_router(trends_router, prefix="/business-os/trends", tags=["Business 
 app.include_router(morning_brief_router, prefix="/business-os/morning-brief", tags=["Business OS"])
 app.include_router(intelligence_router, prefix="/business-os/intelligence", tags=["Business OS"])
 app.include_router(root_cause_router, prefix="/business-os/root-cause", tags=["Business OS"])
+app.include_router(decisions_router, prefix="/business-os/decisions", tags=["Business OS"])
 
 @app.get("/")
 def root():
