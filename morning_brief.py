@@ -1,6 +1,7 @@
 from business_context import get_business_os_context
 from trends import build_trend_summary
 from decision_history import get_decision_history
+from decision_metrics import get_decision_metrics
 
 def get_metric(summary, key, default=0):
     try:
@@ -65,7 +66,7 @@ def build_morning_brief():
 
     account_trends = trends.get("account_trends", {})
     trend_metrics = account_trends.get("metrics", {})
-
+    decision_metrics = get_decision_metrics()
     return {
         "status": "OK",
         "title": "Amazon Ads Morning Brief",
@@ -74,6 +75,7 @@ def build_morning_brief():
             "open_count": len(decision_items),
             "top_open_decisions": decision_items[:5],
         },
+        "decision_metrics": decision_metrics,
         "account_health": {
             "health_score": dashboard_summary.get("health_score"),
             "spend": dashboard_summary.get("spend"),
