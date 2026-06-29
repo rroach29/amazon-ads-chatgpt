@@ -6,7 +6,7 @@ from scheduler_tasks import scheduled_amazon_ads_collection, scheduled_dashboard
 router = APIRouter()
 
 
-@router.post("/scheduler/run")
+@router.post("/run")
 def run_scheduler_now(x_api_key: str = Header(...)):
     verify_key(x_api_key)
 
@@ -18,7 +18,7 @@ def run_scheduler_now(x_api_key: str = Header(...)):
     }
 
 
-@router.post("/scheduler/collect")
+@router.post("/collect")
 def run_dashboard_collection_now(x_api_key: str = Header(...)):
     verify_key(x_api_key)
 
