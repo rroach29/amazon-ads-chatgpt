@@ -2,7 +2,7 @@ from business_context import get_business_os_context
 from trends import build_trend_summary
 from decision_history import get_decision_history
 from decision_metrics import get_decision_metrics
-
+from ai.decision_engine import build_decisions
 
 def get_metric(summary, key, default=0):
     try:
@@ -102,7 +102,7 @@ def build_morning_brief():
 
     open_decisions = get_decision_history(status="OPEN", limit=50)
     decision_items = open_decisions.get("items", [])
-
+    decision_build_result = build_decisions()
     pause_decisions = filter_decisions_by_type(
         decision_items,
         "PAUSE_CAMPAIGN",
@@ -174,7 +174,12 @@ def build_morning_brief():
         "status": "OK",
         "title": "Amazon Ads Morning Brief",
         "dashboard_date": dashboard.get("date"),
-
+        "decision_build": {
+            "status": decision_build_result.get("status"),
+            "count": decision_build_result.get("count"),
+            "history_saved": decision_build_result.get("history_saved"),
+            "breakdown": decision_build_result.get("breakdown"),
+        },
         "executive_summary": {
             "open_decisions": len(decision_items),
             "pause_campaign_decisions": len(pause_decisions),
