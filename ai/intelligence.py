@@ -1,6 +1,6 @@
 from business_context import get_business_os_context
 from trends import build_trend_summary
-
+from decision_history import get_decision_history
 
 def safe_get(d, *keys, default=None):
     current = d
@@ -33,7 +33,8 @@ def build_business_intelligence():
 
     dashboard = context.get("dashboard", {})
     summary = dashboard.get("summary", {})
-
+    open_decisions = get_decision_history(status="OPEN", limit=20)
+    decision_items = open_decisions.get("items", [])
     recommendations = get_list(
         context.get("recommendations", {}),
         "recommendations",
@@ -149,6 +150,10 @@ def build_business_intelligence():
             "health_score": health_score,
         },
         "trend_summary": summarize_trends(trends),
+        "decision_intelligence": {
+            "open_decision_count": len(decision_items),
+            "top_decisions": decision_items[:5],
+        },
         "priorities": priorities,
         "opportunities": opportunities,
         "risks": risks,
