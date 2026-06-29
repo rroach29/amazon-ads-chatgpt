@@ -119,6 +119,7 @@ def create_report(report_type: str):
 
 def get_profiles():
     headers = ads_headers()
+    headers["Accept"] = "application/json"
     headers["Content-Type"] = "application/json"
 
     response = requests.get(
@@ -126,6 +127,11 @@ def get_profiles():
         headers=headers,
         timeout=30,
     )
+
+    if not response.ok:
+        raise HTTPException(status_code=response.status_code, detail=response.text)
+
+    return response.json()
 
 def get_report_status(report_id: str):
     headers = ads_headers()
