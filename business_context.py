@@ -9,7 +9,7 @@ from dashboard import (
 
 from recommendations import build_recommendations
 from optimization_queue import get_queue
-
+from decision_history import get_decision_history
 
 def trim_list(section, key, max_items):
     if not isinstance(section, dict):
