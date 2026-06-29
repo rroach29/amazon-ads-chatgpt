@@ -1,6 +1,16 @@
 from database import SessionLocal
 from models import DecisionHistory
 from execution.handlers import EXECUTION_HANDLERS
+from execution.log import create_execution_log
+
+
+SAFE_AUTO_EXECUTE_DECISIONS = {
+    "PAUSE_CAMPAIGN",
+    "ADD_NEGATIVE_KEYWORD",
+    "HARVEST_KEYWORD",
+    "REDUCE_BID",
+    "INCREASE_BUDGET",
+}
 
 
 def get_decision_or_error(db, decision_id):
@@ -70,7 +80,7 @@ def reject_decision(decision_id, reason=None):
         db.close()
 
 
-def execute_decision(decision_id):
+def execute_decision(decision_id, executed_by="ChatGPT"):
     db = SessionLocal()
 
     try:
@@ -96,30 +106,69 @@ def execute_decision(decision_id):
                 "message": f"No execution handler for {decision.decision}.",
             }
 
-        result = handler(decision)
+        try:
+            result = handler(decision)
+            execution_status = result.get("status", "UNKNOWN")
 
-        decision.status = "EXECUTED"
+            decision.status = "EXECUTED"
 
-        if hasattr(decision, "outcome"):
-            decision.outcome = result.get("status")
+            if hasattr(decision, "outcome"):
+                decision.outcome = execution_status
 
-        if hasattr(decision, "notes"):
-            decision.notes = result.get("message")
+            if hasattr(decision, "notes"):
+                decision.notes = result.get("message")
 
-        db.commit()
+            db.commit()
 
-        return {
-            "status": "OK",
-            "decision_id": decision_id,
-            "decision": decision.decision,
-            "execution": result,
-        }
+            log_result = create_execution_log(
+                decision_id=decision.id,
+                decision_type=decision.decision,
+                status=execution_status,
+                dry_run=result.get("dry_run", True),
+                undo_supported=result.get("undo_supported", False),
+                undo_action=result.get("undo_action"),
+                message=result.get("message"),
+                amazon_request=result.get("amazon_request"),
+                amazon_response=result.get("amazon_response"),
+                execution_result=result,
+                executed_by=executed_by,
+            )
+
+            return {
+                "status": "OK",
+                "decision_id": decision_id,
+                "decision": decision.decision,
+                "execution": result,
+                "execution_log": log_result,
+            }
+
+        except Exception as exc:
+            db.rollback()
+
+            log_result = create_execution_log(
+                decision_id=decision.id,
+                decision_type=decision.decision,
+                status="ERROR",
+                dry_run=True,
+                message="Execution failed.",
+                error=str(exc),
+                executed_by=executed_by,
+            )
+
+            return {
+                "status": "ERROR",
+                "decision_id": decision_id,
+                "decision": decision.decision,
+                "message": "Execution failed.",
+                "error": str(exc),
+                "execution_log": log_result,
+            }
 
     finally:
         db.close()
 
 
-def execute_approved_decisions(limit=20):
+def execute_approved_decisions(limit=20, executed_by="ChatGPT"):
     db = SessionLocal()
 
     try:
@@ -130,18 +179,49 @@ def execute_approved_decisions(limit=20):
             .all()
         )
 
-        decision_ids = [decision.id for decision in decisions]
+        ids = [decision.id for decision in decisions]
 
     finally:
         db.close()
 
     results = []
 
-    for decision_id in decision_ids:
-        results.append(execute_decision(decision_id))
+    for decision_id in ids:
+        results.append(execute_decision(decision_id, executed_by=executed_by))
 
     return {
         "status": "OK",
+        "count": len(results),
+        "results": results,
+    }
+
+
+def approve_and_execute_low_risk_decisions(limit=10, executed_by="ChatGPT"):
+    db = SessionLocal()
+
+    try:
+        decisions = (
+            db.query(DecisionHistory)
+            .filter(DecisionHistory.status == "OPEN")
+            .filter(DecisionHistory.risk == "LOW")
+            .limit(limit)
+            .all()
+        )
+
+        ids = [decision.id for decision in decisions if decision.decision in SAFE_AUTO_EXECUTE_DECISIONS]
+
+    finally:
+        db.close()
+
+    results = []
+
+    for decision_id in ids:
+        approve_decision(decision_id)
+        results.append(execute_decision(decision_id, executed_by=executed_by))
+
+    return {
+        "status": "OK",
+        "message": "Approved and executed low-risk decisions.",
         "count": len(results),
         "results": results,
     }
