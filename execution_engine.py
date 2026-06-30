@@ -1,10 +1,14 @@
 """
-Business OS v3.4.2b
-Execution Engine with Campaign Identity Resolver
+Business OS v3.7.1
+Execution Engine with Live Budget Validation Fix
 
-Adds a critical safety layer:
-- Resolve campaign_id to the correct marketplace/profile before Amazon live execution.
-- Reject live execution if campaign identity is missing, stale, or ambiguous.
+Fix:
+- INCREASE_BUDGET / DECREASE_BUDGET no longer require current_budget in the decision payload
+  when a percent/amount is present.
+- amazon_execution.py is responsible for fetching the live Amazon budget and calculating
+  before/after budget values.
+
+This keeps budget decisions lightweight while preserving safety.
 """
 
 from datetime import datetime
@@ -14,7 +18,7 @@ from database import SessionLocal
 from marketplace_profiles import get_marketplace_profile
 from models import DecisionHistory
 from execution_models import ExecutionJob, ExecutionResult
-from execution_registry import execute_registered_action
+from amazon_execution import execute_amazon_action
 from campaign_identity import enrich_payload_with_campaign_identity
 
 
@@ -24,6 +28,7 @@ SUPPORTED_ACTIONS = {
     "INCREASE_BUDGET",
     "DECREASE_BUDGET",
     "SET_BUDGET",
+    "REDUCE_BID",
     "SET_BID",
     "ADD_NEGATIVE_KEYWORD",
     "HARVEST_KEYWORD",
@@ -109,7 +114,14 @@ def _to_float(value):
         return None
 
 
-def _validate_execution(decision, action, dry_run, confirm_live=False, marketplace_context=None, payload_override=None):
+def _validate_execution(
+    decision,
+    action,
+    dry_run,
+    confirm_live=False,
+    marketplace_context=None,
+    payload_override=None,
+):
     errors = []
 
     if not decision:
@@ -138,7 +150,6 @@ def _validate_execution(decision, action, dry_run, confirm_live=False, marketpla
         if not _get_payload_value(payload, "campaign_id", "campaignId"):
             errors.append("Campaign action requires campaign_id in decision payload.")
 
-        # Critical v3.4.2b safety check.
         if not dry_run:
             context = marketplace_context if isinstance(marketplace_context, dict) else {}
             if not context.get("profile_id") or not context.get("country_code"):
@@ -146,7 +157,7 @@ def _validate_execution(decision, action, dry_run, confirm_live=False, marketpla
                     "Live campaign execution requires resolved profile_id and country_code from CampaignDailyDetail."
                 )
 
-    if action in ["SET_BID"]:
+    if action in ["SET_BID", "REDUCE_BID"]:
         if not _get_payload_value(payload, "target_id", "targetId", "keyword_id", "keywordId"):
             errors.append("Bid action requires target_id or keyword_id in decision payload.")
 
@@ -164,14 +175,8 @@ def _validate_execution(decision, action, dry_run, confirm_live=False, marketpla
             "dailyBudget",
             "recommended_budget",
             "recommendedBudget",
-        )
-
-        current_budget = _get_payload_value(
-            payload,
-            "current_budget",
-            "currentBudget",
-            "existing_budget",
-            "existingBudget",
+            "target_budget",
+            "targetBudget",
         )
 
         percent = _get_payload_value(
@@ -181,6 +186,8 @@ def _validate_execution(decision, action, dry_run, confirm_live=False, marketpla
             "increase_percent",
             "decrease_percent",
             "change_percent",
+            "suggested_budget_increase_percent",
+            "suggestedBudgetIncreasePercent",
         )
 
         amount = _get_payload_value(
@@ -191,17 +198,22 @@ def _validate_execution(decision, action, dry_run, confirm_live=False, marketpla
             "decrease_amount",
         )
 
+        # SET_BUDGET needs a final budget.
         if action == "SET_BUDGET" and _to_float(candidate_budget) is None:
             errors.append("SET_BUDGET requires new_budget/budget/recommended_budget in decision payload.")
 
+        # v3.7.1 fix:
+        # INCREASE_BUDGET / DECREASE_BUDGET should NOT require current_budget here.
+        # amazon_execution.py fetches the live current budget before calculating the new budget.
         if action in ["INCREASE_BUDGET", "DECREASE_BUDGET"]:
             has_final_budget = _to_float(candidate_budget) is not None
-            has_delta = _to_float(current_budget) is not None and (
-                _to_float(percent) is not None or _to_float(amount) is not None
-            )
+            has_delta = _to_float(percent) is not None or _to_float(amount) is not None
 
             if not has_final_budget and not has_delta:
-                errors.append(f"{action} requires either a final budget or current_budget plus percent/amount.")
+                errors.append(
+                    f"{action} requires either a final budget, percent, or amount. "
+                    "current_budget is fetched live from Amazon during execution."
+                )
 
     return errors
 
@@ -360,7 +372,7 @@ def run_execution_job(execution_job_id, confirm_live=False):
         job_payload = job.payload or {}
         decision_payload = job_payload.get("payload", {}) if isinstance(job_payload, dict) else {}
 
-        adapter_result = execute_registered_action(
+        adapter_result = execute_amazon_action(
             action=job.action,
             profile_id=job.profile_id,
             country_code=job.country_code,
@@ -396,7 +408,7 @@ def run_execution_job(execution_job_id, confirm_live=False):
                 decision.status = "EXECUTED"
                 decision.outcome = "EXECUTED_LIVE"
                 decision.evaluated_at = datetime.utcnow()
-                decision.notes = "Executed live through Business OS v3.4.2b with campaign identity resolution."
+                decision.notes = "Executed live through Business OS v3.7.1."
 
         db.commit()
         db.refresh(result)
