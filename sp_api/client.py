@@ -20,7 +20,7 @@ import hmac
 import json
 import os
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
@@ -186,20 +186,97 @@ class SPAPIClient:
         asin_granularity: str = "CHILD",
         date_granularity: str = "DAY",
     ) -> dict[str, Any]:
+        """Request a Seller Central Sales & Traffic report.
+
+        Amazon's Reports API expects dataStartTime/dataEndTime as RFC3339 UTC
+        timestamps and marketplaceIds as Amazon marketplace IDs, not country
+        codes. Swagger users often enter values such as ``06/29/2026`` and
+        ``CA``; normalize those before making the SP-API call so bad payloads
+        are caught locally instead of creating confusing 400 responses.
+        """
+        resolved_marketplace_id = self._resolve_marketplace_id(marketplace_id or self.config.marketplace_id)
+        if not resolved_marketplace_id:
+            return {
+                "status": "ERROR",
+                "message": "No valid marketplace ID configured.",
+                "hint": "Use marketplace=US/CA/MX or marketplace_id=ATVPDKIKX0DER/A2EUQ1WTGCTBG2/A1AM78C64UM0Y8.",
+            }
+
+        data_start = self._report_timestamp(start_date, end_of_day=False)
+        data_end = self._report_timestamp(end_date, end_of_day=True)
+        if not data_start or not data_end:
+            return {
+                "status": "ERROR",
+                "message": "Invalid report date format.",
+                "hint": "Use YYYY-MM-DD. MM/DD/YYYY and full ISO timestamps are also accepted.",
+                "received": {"start_date": start_date, "end_date": end_date},
+            }
+        if data_start > data_end:
+            return {
+                "status": "ERROR",
+                "message": "dataStartTime must be before dataEndTime.",
+                "received": {"dataStartTime": data_start, "dataEndTime": data_end},
+            }
+
         body = {
             "reportType": "GET_SALES_AND_TRAFFIC_REPORT",
-            "marketplaceIds": [marketplace_id or self.config.marketplace_id],
-            "dataStartTime": f"{start_date}T00:00:00Z",
-            "dataEndTime": f"{end_date}T23:59:59Z",
+            "marketplaceIds": [resolved_marketplace_id],
+            "dataStartTime": data_start,
+            "dataEndTime": data_end,
             "reportOptions": {
-                "dateGranularity": date_granularity,
-                "asinGranularity": asin_granularity,
+                "dateGranularity": str(date_granularity or "DAY").upper(),
+                "asinGranularity": str(asin_granularity or "CHILD").upper(),
             },
         }
-        body["marketplaceIds"] = [m for m in body["marketplaceIds"] if m]
-        if not body["marketplaceIds"]:
-            return {"status": "ERROR", "message": "No marketplace ID configured."}
         return self._request("POST", "/reports/2021-06-30/reports", body=body)
+
+    def _resolve_marketplace_id(self, value: str | None) -> str | None:
+        if not value:
+            return None
+        normalized = str(value).strip()
+        upper = normalized.upper()
+        aliases = {
+            "US": os.getenv("SP_API_MARKETPLACE_ID_US", "ATVPDKIKX0DER"),
+            "USA": os.getenv("SP_API_MARKETPLACE_ID_US", "ATVPDKIKX0DER"),
+            "AMAZON.COM": os.getenv("SP_API_MARKETPLACE_ID_US", "ATVPDKIKX0DER"),
+            "CA": os.getenv("SP_API_MARKETPLACE_ID_CA", "A2EUQ1WTGCTBG2"),
+            "CANADA": os.getenv("SP_API_MARKETPLACE_ID_CA", "A2EUQ1WTGCTBG2"),
+            "AMAZON.CA": os.getenv("SP_API_MARKETPLACE_ID_CA", "A2EUQ1WTGCTBG2"),
+            "MX": os.getenv("SP_API_MARKETPLACE_ID_MX", "A1AM78C64UM0Y8"),
+            "MEXICO": os.getenv("SP_API_MARKETPLACE_ID_MX", "A1AM78C64UM0Y8"),
+            "AMAZON.COM.MX": os.getenv("SP_API_MARKETPLACE_ID_MX", "A1AM78C64UM0Y8"),
+        }
+        return aliases.get(upper, normalized)
+
+    def _report_timestamp(self, value: str, end_of_day: bool) -> str | None:
+        parsed = self._parse_report_datetime(value)
+        if parsed is None:
+            return None
+        if isinstance(parsed, date) and not isinstance(parsed, datetime):
+            parsed = datetime.combine(parsed, time.max if end_of_day else time.min)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        else:
+            parsed = parsed.astimezone(timezone.utc)
+        return parsed.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    def _parse_report_datetime(self, value: str | None) -> date | datetime | None:
+        if not value:
+            return None
+        text = str(value).strip()
+        # Full ISO/RFC3339 timestamps from Swagger or callers.
+        try:
+            iso_text = text.replace("Z", "+00:00")
+            return datetime.fromisoformat(iso_text)
+        except Exception:
+            pass
+        # Date-only values accepted by humans and previous Business OS releases.
+        for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%Y/%m/%d"):
+            try:
+                return datetime.strptime(text[:10], fmt).date()
+            except Exception:
+                continue
+        return None
 
     def get_report(self, report_id: str) -> dict[str, Any]:
         return self._request("GET", f"/reports/2021-06-30/reports/{report_id}")

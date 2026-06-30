@@ -70,11 +70,13 @@ class SPAPIReportPipelineService:
         asin_granularity: str = "CHILD",
         date_granularity: str = "DAY",
     ) -> dict[str, Any]:
-        client = SPAPIClient(SPAPIConfig.from_env(marketplace))
+        normalized_marketplace = SPAPIReportPipelineService._normalize_marketplace(marketplace or country_code or marketplace_id)
+        client = SPAPIClient(SPAPIConfig.from_env(normalized_marketplace))
+        resolved_marketplace_id = client._resolve_marketplace_id(marketplace_id or client.config.marketplace_id or normalized_marketplace)
         requested = client.request_sales_and_traffic_report(
             start_date=start_date,
             end_date=end_date,
-            marketplace_id=marketplace_id,
+            marketplace_id=resolved_marketplace_id,
             asin_granularity=asin_granularity,
             date_granularity=date_granularity,
         )
@@ -84,9 +86,9 @@ class SPAPIReportPipelineService:
                 report_type="GET_SALES_AND_TRAFFIC_REPORT",
                 requested_at=SPAPIReportPipelineService._now(),
                 status="REQUESTED" if requested.get("status") == "OK" else "ERROR",
-                marketplace=marketplace,
-                marketplace_id=marketplace_id or client.config.marketplace_id,
-                country_code=(country_code or marketplace or "").upper() or None,
+                marketplace=normalized_marketplace,
+                marketplace_id=resolved_marketplace_id,
+                country_code=(country_code or normalized_marketplace or "").upper() or None,
                 currency=currency,
                 profile_id=profile_id,
                 start_date=SPAPIReportPipelineService._parse_date(start_date),
@@ -96,8 +98,10 @@ class SPAPIReportPipelineService:
                 request_payload={
                     "start_date": start_date,
                     "end_date": end_date,
-                    "marketplace": marketplace,
-                    "marketplace_id": marketplace_id or client.config.marketplace_id,
+                    "marketplace": normalized_marketplace,
+                    "marketplace_id": resolved_marketplace_id,
+                    "dataStartTime": client._report_timestamp(start_date, end_of_day=False),
+                    "dataEndTime": client._report_timestamp(end_date, end_of_day=True),
                     "asin_granularity": asin_granularity,
                     "date_granularity": date_granularity,
                 },
@@ -327,10 +331,32 @@ class SPAPIReportPipelineService:
     def _parse_date(value: str | None):
         if not value:
             return None
+        text = str(value).strip()
+        # Accept API-friendly YYYY-MM-DD, Swagger/browser MM/DD/YYYY, and ISO timestamps.
         try:
-            return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
+            return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
         except Exception:
+            pass
+        for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%Y/%m/%d"):
+            try:
+                return datetime.strptime(text[:10], fmt).date()
+            except Exception:
+                continue
+        return None
+
+    @staticmethod
+    def _normalize_marketplace(value: str | None) -> str | None:
+        if not value:
             return None
+        text = str(value).strip()
+        upper = text.upper()
+        if upper in {"US", "USA", "ATVPDKIKX0DER", "AMAZON.COM"}:
+            return "US"
+        if upper in {"CA", "CANADA", "A2EUQ1WTGCTBG2", "AMAZON.CA"}:
+            return "CA"
+        if upper in {"MX", "MEXICO", "A1AM78C64UM0Y8", "AMAZON.COM.MX"}:
+            return "MX"
+        return text
 
     @staticmethod
     def _now():
