@@ -1,4 +1,4 @@
-"""Business OS v8.6/v9.0 — Revenue Intelligence Routes."""
+"""Business OS Revenue Intelligence Routes."""
 
 from fastapi import APIRouter, Header
 
@@ -65,7 +65,6 @@ def business_os_revenue_paid_vs_organic(
     return RevenueIntelligenceEngine.paid_vs_organic(window=window, country_code=country_code, profile_id=profile_id)
 
 
-# v9.0 first-class reconciliation endpoints.
 @router.get("/revenue/organic-vs-paid")
 def business_os_revenue_organic_vs_paid(
     window: str = "latest",
@@ -86,6 +85,16 @@ def business_os_revenue_reconciliation(
 ):
     verify_key(x_api_key)
     return RevenueReconciliationService.organic_vs_paid(window=window, country_code=country_code, profile_id=profile_id)
+
+
+@router.get("/revenue/data-health")
+def business_os_revenue_data_health(
+    country_code: str | None = None,
+    profile_id: str | None = None,
+    x_api_key: str = Header(...),
+):
+    verify_key(x_api_key)
+    return RevenueReconciliationService.data_health(country_code=country_code, profile_id=profile_id)
 
 
 @router.get("/revenue/executive-snapshot")
