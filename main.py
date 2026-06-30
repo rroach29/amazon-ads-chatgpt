@@ -57,7 +57,7 @@ app.include_router(admin_router, prefix="/admin", tags=["Admin"])
 app.include_router(gpt_router, prefix="/gpt", tags=["GPT Optimized"])
 app.include_router(campaign_identity_router, prefix="/business-os", tags=["Business OS Campaign Identity"])
 app.include_router(execution_audit_router, prefix="/business-os", tags=["Business OS Execution Audit"])
-
+app.include_router(execution_batch_router, prefix="/business-os", tags=["Business OS Execution Batch"])
 
 @app.get("/")
 def root():
