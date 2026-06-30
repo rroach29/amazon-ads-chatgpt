@@ -45,6 +45,7 @@ from routes_provenance import router as provenance_router
 from routes_profit_intelligence import router as profit_intelligence_router
 from routes_revenue_intelligence import router as revenue_intelligence_router
 from routes_product_intelligence import router as product_intelligence_router
+from routes_sp_api import router as sp_api_router
 
 
 app = FastAPI(title="Business OS API")
@@ -92,6 +93,7 @@ app.include_router(provenance_router, prefix="/business-os", tags=["Business OS 
 app.include_router(profit_intelligence_router, prefix="/business-os", tags=["Business OS Profit Intelligence"])
 app.include_router(revenue_intelligence_router, prefix="/business-os", tags=["Business OS Revenue Intelligence"])
 app.include_router(product_intelligence_router, prefix="/business-os", tags=["Business OS Product Intelligence"])
+app.include_router(sp_api_router, prefix="/business-os", tags=["Business OS SP-API"] )
 
 
 @app.get("/")
