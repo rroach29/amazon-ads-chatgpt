@@ -33,6 +33,7 @@ from routes_data_context import router as data_context_router
 from routes_analytics_health import router as analytics_health_router
 from routes_business_plans import router as business_plans_router
 from routes_mission_control import router as mission_control_router
+from routes_optimization import router as optimization_router
 
 
 app = FastAPI(title="Business OS API")
