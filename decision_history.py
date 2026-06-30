@@ -2,6 +2,7 @@ from datetime import datetime
 
 from database import SessionLocal
 from models import DecisionHistory
+from business_data_context import resolve_data_context
 
 
 def serialize_decision_history(row):
@@ -26,89 +27,65 @@ def serialize_decision_history(row):
     }
 
 
-def _payload_identity(payload):
-    payload = payload if isinstance(payload, dict) else {}
+def _payload_dict(value):
+    return value if isinstance(value, dict) else {}
 
-    return {
-        "campaign_id": str(payload.get("campaign_id") or ""),
-        "search_term": str(payload.get("search_term") or ""),
-        "keyword_id": str(payload.get("keyword_id") or ""),
-        "keyword": str(payload.get("keyword") or ""),
-        "ad_group_id": str(payload.get("ad_group_id") or ""),
-    }
+
+def _payload_window(payload):
+    payload = _payload_dict(payload)
+    window = payload.get("data_window")
+    return window if isinstance(window, dict) else {}
+
+
+def _same_window(existing_payload, new_payload):
+    existing_window = _payload_window(existing_payload)
+    new_window = _payload_window(new_payload)
+
+    if not existing_window and not new_window:
+        return True
+
+    return (
+        existing_window.get("start_date") == new_window.get("start_date")
+        and existing_window.get("end_date") == new_window.get("end_date")
+    )
+
+
+def _same_identity(existing_payload, new_payload, decision_type):
+    existing_payload = _payload_dict(existing_payload)
+    new_payload = _payload_dict(new_payload)
+
+    if str(existing_payload.get("campaign_id")) != str(new_payload.get("campaign_id")):
+        return False
+
+    # Campaign decisions are unique by decision type + campaign + data window.
+    if decision_type in ["PAUSE_CAMPAIGN", "INCREASE_BUDGET", "DECREASE_BUDGET", "SET_BUDGET"]:
+        return True
+
+    # Search-term decisions are unique by decision type + campaign + search term + data window.
+    if str(existing_payload.get("search_term") or "") == str(new_payload.get("search_term") or ""):
+        return True
+
+    # Bid decisions can also be matched on keyword_id.
+    if decision_type in ["REDUCE_BID", "SET_BID"]:
+        if new_payload.get("keyword_id") and str(existing_payload.get("keyword_id")) == str(new_payload.get("keyword_id")):
+            return True
+
+    return False
 
 
 def _merge_payload(existing_payload, new_payload):
-    """
-    Preserve existing payload values, but fill in any missing/blank values from
-    the new decision payload.
-
-    This fixes stale open decisions created before newer execution fields existed,
-    for example REDUCE_BID decisions missing keyword_id.
-    """
-    existing_payload = existing_payload if isinstance(existing_payload, dict) else {}
-    new_payload = new_payload if isinstance(new_payload, dict) else {}
+    existing_payload = _payload_dict(existing_payload)
+    new_payload = _payload_dict(new_payload)
 
     merged = dict(existing_payload)
     changed = False
 
     for key, value in new_payload.items():
-        existing_value = merged.get(key)
-
-        if existing_value in [None, "", [], {}] and value not in [None, "", [], {}]:
-            merged[key] = value
-            changed = True
-
-    # Also allow the newer decision to refresh marketplace/execution identity fields.
-    refreshable_keys = [
-        "keyword_id",
-        "target_id",
-        "campaign_id",
-        "ad_group_id",
-        "profile_id",
-        "country_code",
-        "marketplace",
-        "currency",
-        "suggested_bid_reduction_percent",
-        "reduction_percent",
-        "suggested_budget_increase_percent",
-        "increase_percent",
-    ]
-
-    for key in refreshable_keys:
-        value = new_payload.get(key)
         if value not in [None, "", [], {}] and merged.get(key) != value:
             merged[key] = value
             changed = True
 
     return merged, changed
-
-
-def _same_decision(existing_payload, new_payload, decision_type):
-    existing = _payload_identity(existing_payload)
-    new = _payload_identity(new_payload)
-
-    if existing["campaign_id"] != new["campaign_id"]:
-        return False
-
-    # Search-term decisions are normally unique by campaign + search term.
-    if new["search_term"] and existing["search_term"] == new["search_term"]:
-        return True
-
-    # Bid decisions should also consider keyword_id if available.
-    if decision_type in ["REDUCE_BID", "SET_BID"]:
-        if new["keyword_id"] and existing["keyword_id"] == new["keyword_id"]:
-            return True
-
-        if (
-            new["keyword"]
-            and existing["keyword"] == new["keyword"]
-            and new["ad_group_id"]
-            and existing["ad_group_id"] == new["ad_group_id"]
-        ):
-            return True
-
-    return False
 
 
 def save_decisions_to_history(decisions):
@@ -134,7 +111,10 @@ def save_decisions_to_history(decisions):
             for item in open_items:
                 existing_payload = item.payload or {}
 
-                if _same_decision(existing_payload, payload, decision_type):
+                if (
+                    _same_identity(existing_payload, payload, decision_type)
+                    and _same_window(existing_payload, payload)
+                ):
                     existing_item = item
                     break
 
@@ -146,10 +126,7 @@ def save_decisions_to_history(decisions):
                     existing_item.priority = decision.get("priority", existing_item.priority)
                     existing_item.confidence = decision.get("confidence", existing_item.confidence)
                     existing_item.risk = decision.get("risk", existing_item.risk)
-                    existing_item.recommended_action = decision.get(
-                        "recommended_action",
-                        existing_item.recommended_action,
-                    )
+                    existing_item.recommended_action = decision.get("recommended_action", existing_item.recommended_action)
                     existing_item.reasoning = decision.get("reasoning", existing_item.reasoning)
                     existing_item.estimated_monthly_impact = decision.get(
                         "estimated_monthly_impact",
@@ -191,7 +168,27 @@ def save_decisions_to_history(decisions):
         db.close()
 
 
-def get_decision_history(status: str = None, limit: int = 100):
+def _is_current_open_decision(row, context):
+    payload = _payload_dict(row.payload)
+    window = _payload_window(payload)
+
+    # Hide legacy open decisions from default views. They were created before
+    # data_window existed and are often based on stale/mixed windows.
+    if not window:
+        return False
+
+    return (
+        window.get("start_date") == context.get("start_date")
+        and window.get("end_date") == context.get("end_date")
+    )
+
+
+def get_decision_history(
+    status: str = None,
+    limit: int = 100,
+    current_window_only: bool = True,
+    include_legacy: bool = False,
+):
     db = SessionLocal()
 
     try:
@@ -206,13 +203,27 @@ def get_decision_history(status: str = None, limit: int = 100):
         rows = (
             query
             .order_by(DecisionHistory.created_at.desc())
-            .limit(limit)
+            .limit(limit * 5)
             .all()
         )
+
+        data_context = None
+
+        if status == "OPEN" and current_window_only:
+            data_context = resolve_data_context(window="latest")
+            rows = [
+                row for row in rows
+                if _is_current_open_decision(row, data_context) or include_legacy
+            ]
+
+        rows = rows[:limit]
 
         return {
             "status": "OK",
             "count": len(rows),
+            "data_context": data_context,
+            "current_window_only": current_window_only if status == "OPEN" else False,
+            "include_legacy": include_legacy,
             "items": [serialize_decision_history(row) for row in rows],
         }
 

@@ -5,6 +5,7 @@ from models import DailyDashboard, CampaignDailyDetail, SearchTermDailyDetail
 from amazon_ads import download_report_data
 from analytics import build_dashboard_analysis
 from marketplace_profiles import get_marketplace_profile
+from business_data_context import resolve_data_context
 
 
 def _normalize_country_code(country_code):
@@ -302,8 +303,10 @@ def get_dashboard_history(days: int = 30, country_code: str | None = None, profi
             query = query.filter(DailyDashboard.profile_id == str(profile_id))
         elif country_code:
             query = query.filter(DailyDashboard.country_code == _normalize_country_code(country_code))
+        else:
+            query = query.filter(DailyDashboard.profile_id.isnot(None))
 
-        rows = query.order_by(DailyDashboard.date.desc()).limit(days).all()
+        rows = query.order_by(DailyDashboard.date.desc(), DailyDashboard.created_at.desc()).limit(days).all()
         rows = list(reversed(rows))
 
         return {
@@ -396,12 +399,46 @@ def _apply_marketplace_filters(query, model, country_code=None, profile_id=None)
     return query
 
 
-def get_campaigns(limit: int = 100, country_code: str | None = None, profile_id: str | None = None):
+
+
+def _apply_latest_date_filter(query, model, country_code=None, profile_id=None, date_window="latest"):
+    """
+    v4.0.1 safety guard:
+    Detail-table endpoints default to the latest completed dashboard date.
+
+    This prevents top campaigns / waste campaigns / search terms from mixing
+    older report windows with the current dashboard and Morning Brief.
+    """
+    context = resolve_data_context(
+        window=date_window or "latest",
+        country_code=country_code,
+        profile_id=profile_id,
+    )
+
+    if context.get("status") != "OK":
+        return query, context
+
+    if context.get("start_date"):
+        query = query.filter(model.date >= context["start_date"])
+
+    if context.get("end_date"):
+        query = query.filter(model.date <= context["end_date"])
+
+    # When no marketplace filter is provided, ignore legacy rows that lack identity.
+    # Those older rows are the source of many duplicates.
+    if not country_code and not profile_id and hasattr(model, "profile_id"):
+        query = query.filter(model.profile_id.isnot(None))
+
+    return query, context
+
+
+def get_campaigns(limit: int = 100, country_code: str | None = None, profile_id: str | None = None, date_window: str = "latest"):
     db = SessionLocal()
 
     try:
         query = db.query(CampaignDailyDetail).filter(CampaignDailyDetail.channel == "amazon_ads")
         query = _apply_marketplace_filters(query, CampaignDailyDetail, country_code, profile_id)
+        query, data_context = _apply_latest_date_filter(query, CampaignDailyDetail, country_code, profile_id, date_window)
 
         rows = query.order_by(CampaignDailyDetail.date.desc(), CampaignDailyDetail.spend.desc()).limit(limit).all()
 
@@ -410,6 +447,7 @@ def get_campaigns(limit: int = 100, country_code: str | None = None, profile_id:
             "count": len(rows),
             "country_code": _normalize_country_code(country_code),
             "profile_id": str(profile_id) if profile_id else None,
+            "data_context": data_context,
             "campaigns": [serialize_campaign(row) for row in rows],
         }
 
@@ -417,7 +455,7 @@ def get_campaigns(limit: int = 100, country_code: str | None = None, profile_id:
         db.close()
 
 
-def get_top_campaigns(limit: int = 25, country_code: str | None = None, profile_id: str | None = None):
+def get_top_campaigns(limit: int = 25, country_code: str | None = None, profile_id: str | None = None, date_window: str = "latest"):
     db = SessionLocal()
 
     try:
@@ -427,6 +465,7 @@ def get_top_campaigns(limit: int = 25, country_code: str | None = None, profile_
             .filter(CampaignDailyDetail.sales > 0)
         )
         query = _apply_marketplace_filters(query, CampaignDailyDetail, country_code, profile_id)
+        query, data_context = _apply_latest_date_filter(query, CampaignDailyDetail, country_code, profile_id, date_window)
 
         rows = query.order_by(CampaignDailyDetail.sales.desc()).limit(limit).all()
 
@@ -435,6 +474,7 @@ def get_top_campaigns(limit: int = 25, country_code: str | None = None, profile_
             "count": len(rows),
             "country_code": _normalize_country_code(country_code),
             "profile_id": str(profile_id) if profile_id else None,
+            "data_context": data_context,
             "campaigns": [serialize_campaign(row) for row in rows],
         }
 
@@ -442,7 +482,7 @@ def get_top_campaigns(limit: int = 25, country_code: str | None = None, profile_
         db.close()
 
 
-def get_waste_campaigns(min_spend: float = 10, limit: int = 25, country_code: str | None = None, profile_id: str | None = None):
+def get_waste_campaigns(min_spend: float = 10, limit: int = 25, country_code: str | None = None, profile_id: str | None = None, date_window: str = "latest"):
     db = SessionLocal()
 
     try:
@@ -453,6 +493,7 @@ def get_waste_campaigns(min_spend: float = 10, limit: int = 25, country_code: st
             .filter(CampaignDailyDetail.sales == 0)
         )
         query = _apply_marketplace_filters(query, CampaignDailyDetail, country_code, profile_id)
+        query, data_context = _apply_latest_date_filter(query, CampaignDailyDetail, country_code, profile_id, date_window)
 
         rows = query.order_by(CampaignDailyDetail.spend.desc()).limit(limit).all()
 
@@ -462,6 +503,7 @@ def get_waste_campaigns(min_spend: float = 10, limit: int = 25, country_code: st
             "count": len(rows),
             "country_code": _normalize_country_code(country_code),
             "profile_id": str(profile_id) if profile_id else None,
+            "data_context": data_context,
             "campaigns": [serialize_campaign(row) for row in rows],
         }
 
@@ -469,12 +511,13 @@ def get_waste_campaigns(min_spend: float = 10, limit: int = 25, country_code: st
         db.close()
 
 
-def get_search_terms(limit: int = 100, country_code: str | None = None, profile_id: str | None = None):
+def get_search_terms(limit: int = 100, country_code: str | None = None, profile_id: str | None = None, date_window: str = "latest"):
     db = SessionLocal()
 
     try:
         query = db.query(SearchTermDailyDetail).filter(SearchTermDailyDetail.channel == "amazon_ads")
         query = _apply_marketplace_filters(query, SearchTermDailyDetail, country_code, profile_id)
+        query, data_context = _apply_latest_date_filter(query, SearchTermDailyDetail, country_code, profile_id, date_window)
 
         rows = query.order_by(SearchTermDailyDetail.date.desc(), SearchTermDailyDetail.spend.desc()).limit(limit).all()
 
@@ -483,6 +526,7 @@ def get_search_terms(limit: int = 100, country_code: str | None = None, profile_
             "count": len(rows),
             "country_code": _normalize_country_code(country_code),
             "profile_id": str(profile_id) if profile_id else None,
+            "data_context": data_context,
             "search_terms": [serialize_search_term(row) for row in rows],
         }
 
@@ -490,7 +534,7 @@ def get_search_terms(limit: int = 100, country_code: str | None = None, profile_
         db.close()
 
 
-def get_winning_search_terms(max_acos: float = 35, min_orders: int = 1, limit: int = 25, country_code: str | None = None, profile_id: str | None = None):
+def get_winning_search_terms(max_acos: float = 35, min_orders: int = 1, limit: int = 25, country_code: str | None = None, profile_id: str | None = None, date_window: str = "latest"):
     db = SessionLocal()
 
     try:
@@ -501,6 +545,7 @@ def get_winning_search_terms(max_acos: float = 35, min_orders: int = 1, limit: i
             .filter(SearchTermDailyDetail.acos <= max_acos)
         )
         query = _apply_marketplace_filters(query, SearchTermDailyDetail, country_code, profile_id)
+        query, data_context = _apply_latest_date_filter(query, SearchTermDailyDetail, country_code, profile_id, date_window)
 
         rows = query.order_by(SearchTermDailyDetail.sales.desc()).limit(limit).all()
 
@@ -511,6 +556,7 @@ def get_winning_search_terms(max_acos: float = 35, min_orders: int = 1, limit: i
             "count": len(rows),
             "country_code": _normalize_country_code(country_code),
             "profile_id": str(profile_id) if profile_id else None,
+            "data_context": data_context,
             "search_terms": [serialize_search_term(row) for row in rows],
         }
 
@@ -518,7 +564,7 @@ def get_winning_search_terms(max_acos: float = 35, min_orders: int = 1, limit: i
         db.close()
 
 
-def get_wasted_search_terms(min_spend: float = 10, limit: int = 25, country_code: str | None = None, profile_id: str | None = None):
+def get_wasted_search_terms(min_spend: float = 10, limit: int = 25, country_code: str | None = None, profile_id: str | None = None, date_window: str = "latest"):
     db = SessionLocal()
 
     try:
@@ -529,6 +575,7 @@ def get_wasted_search_terms(min_spend: float = 10, limit: int = 25, country_code
             .filter(SearchTermDailyDetail.sales == 0)
         )
         query = _apply_marketplace_filters(query, SearchTermDailyDetail, country_code, profile_id)
+        query, data_context = _apply_latest_date_filter(query, SearchTermDailyDetail, country_code, profile_id, date_window)
 
         rows = query.order_by(SearchTermDailyDetail.spend.desc()).limit(limit).all()
 
@@ -538,6 +585,7 @@ def get_wasted_search_terms(min_spend: float = 10, limit: int = 25, country_code
             "count": len(rows),
             "country_code": _normalize_country_code(country_code),
             "profile_id": str(profile_id) if profile_id else None,
+            "data_context": data_context,
             "search_terms": [serialize_search_term(row) for row in rows],
         }
 

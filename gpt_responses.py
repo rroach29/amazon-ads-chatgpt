@@ -68,6 +68,7 @@ def _compact_decision(row):
         "sales": payload.get("sales"),
         "orders": payload.get("orders"),
         "acos": payload.get("acos"),
+        "data_window": payload.get("data_window"),
     }
 
 
