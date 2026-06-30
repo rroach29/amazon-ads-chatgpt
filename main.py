@@ -29,6 +29,7 @@ from routes_campaign_identity import router as campaign_identity_router
 from routes_execution_audit import router as execution_audit_router
 from routes_execution_batch import router as execution_batch_router
 from routes_report_pipeline import router as report_pipeline_router
+from routes_data_context import router as data_context_router
 
 
 app = FastAPI(title="Business OS API")
@@ -60,6 +61,8 @@ app.include_router(campaign_identity_router, prefix="/business-os", tags=["Busin
 app.include_router(execution_audit_router, prefix="/business-os", tags=["Business OS Execution Audit"])
 app.include_router(execution_batch_router, prefix="/business-os", tags=["Business OS Execution Batch"])
 app.include_router(report_pipeline_router, prefix="/business-os", tags=["Business OS Report Pipeline"])
+app.include_router(data_context_router, prefix="/business-os", tags=["Business OS Data Context"])
+
 
 @app.get("/")
 def root():
