@@ -42,6 +42,7 @@ from routes_domain import router as domain_router
 from routes_diagnostics import router as diagnostics_router
 from routes_planning import router as planning_router
 from routes_provenance import router as provenance_router
+from routes_profit_intelligence import router as profit_intelligence_router
 
 
 app = FastAPI(title="Business OS API")
@@ -86,6 +87,7 @@ app.include_router(domain_router, prefix="/business-os", tags=["Business OS Doma
 app.include_router(diagnostics_router, prefix="/business-os", tags=["Business OS Diagnostics"])
 app.include_router(planning_router, prefix="/business-os", tags=["Business OS Executive Planning"])
 app.include_router(provenance_router, prefix="/business-os", tags=["Business OS Optimizer Manifests"])
+app.include_router(profit_intelligence_router, prefix="/business-os", tags=["Business OS Profit Intelligence"])
 
 
 @app.get("/")

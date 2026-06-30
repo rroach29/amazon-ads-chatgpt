@@ -30,6 +30,11 @@ except Exception:  # pragma: no cover
 from .objectives import BusinessObjectives
 from .priority_engine import ExecutivePriorityEngine
 
+try:
+    from profit_intelligence import ProfitIntelligenceEngine
+except Exception:  # pragma: no cover
+    ProfitIntelligenceEngine = None
+
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
@@ -65,6 +70,7 @@ class ExecutiveBriefingService:
         analytics = ExecutiveBriefingService._safe_analytics()
         scorecard = ExecutiveBriefingService._safe_scorecard()
         learning = ExecutiveBriefingService._safe_learning()
+        profit = ExecutiveBriefingService._safe_profit(window, country_code, profile_id)
 
         executive_summary = ExecutiveBriefingService._executive_summary(
             objective_config=objective_config,
@@ -91,6 +97,7 @@ class ExecutiveBriefingService:
             "decision_analytics": analytics,
             "optimizer_scorecard": scorecard,
             "learning": learning,
+            "profit_intelligence": profit,
             "operating_mode": {
                 "role": "AI_COO_EXECUTIVE_LAYER",
                 "approval_required": True,
@@ -102,6 +109,7 @@ class ExecutiveBriefingService:
                 "Which marketplace is improving or deteriorating?",
                 "Which optimizer is creating the most reliable value?",
                 "Which product family deserves budget or efficiency attention?",
+                "Which campaigns are creating or leaking estimated contribution profit?",
             ],
         }
 
@@ -162,6 +170,15 @@ class ExecutiveBriefingService:
             return {"status": "UNAVAILABLE"}
         try:
             return build_learning_intelligence()
+        except Exception as exc:
+            return {"status": "ERROR", "message": str(exc)}
+
+    @staticmethod
+    def _safe_profit(window: str, country_code: str | None, profile_id: str | None) -> dict[str, Any]:
+        if not ProfitIntelligenceEngine:
+            return {"status": "UNAVAILABLE"}
+        try:
+            return ProfitIntelligenceEngine.executive_summary(window=window, country_code=country_code, profile_id=profile_id)
         except Exception as exc:
             return {"status": "ERROR", "message": str(exc)}
 
