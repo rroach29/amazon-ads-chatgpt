@@ -5,9 +5,9 @@ from ai.decisions.shared import (
     make_decision,
     safe_float,
     safe_int,
-    risk_from_confidence,
     sort_decisions,
 )
+from decision_risk_engine import assess_decision_risk
 
 
 NEGATIVE_MIN_SPEND = 3
@@ -59,44 +59,56 @@ def get_negative_keyword_decisions(limit=25, data_context=None, country_code=Non
                 confidence += 9
 
             confidence = min(confidence, 99)
-            risk = risk_from_confidence(confidence)
             estimated_impact = round(spend * 30, 2)
+
+            payload = {
+                "campaign_id": str(row.campaign_id),
+                "campaign_name": row.campaign_name,
+                "ad_group_id": row.ad_group_id,
+                "ad_group_name": row.ad_group_name,
+                "keyword_id": str(row.keyword_id) if row.keyword_id else None,
+                "keyword": row.keyword,
+                "match_type": row.match_type,
+                "search_term": row.search_term,
+                "negative_match_type": "phrase",
+                "profile_id": row.profile_id,
+                "country_code": row.country_code,
+                "marketplace": row.marketplace,
+                "currency": row.currency,
+                "data_window": context,
+                "spend": spend,
+                "clicks": clicks,
+                "sales": safe_float(row.sales),
+                "orders": safe_int(row.orders),
+                "acos": row.acos,
+                "roas": row.roas,
+            }
+
+            risk_assessment = assess_decision_risk(
+                decision="ADD_NEGATIVE_KEYWORD",
+                confidence=confidence,
+                estimated_monthly_impact=estimated_impact,
+                payload=payload,
+            )
+
+            payload["risk_assessment"] = risk_assessment
 
             decisions.append(
                 make_decision(
                     decision="ADD_NEGATIVE_KEYWORD",
                     priority="HIGH" if confidence >= 85 else "MEDIUM",
                     confidence=confidence,
-                    risk=risk,
+                    risk=risk_assessment["overall_risk"],
                     estimated_monthly_impact=estimated_impact,
                     reasoning=[
                         f"Data window: {context.get('start_date')} to {context.get('end_date')}.",
                         f'Search term "{row.search_term}" spent ${spend:.2f}.',
                         f"It generated {clicks} clicks and no attributed sales.",
+                        "Negative keyword action is reversible and does not increase spend.",
+                        f"Risk assessment: {risk_assessment['overall_risk']}.",
                     ],
                     recommended_action=f"Add negative phrase: {row.search_term}",
-                    payload={
-                        "campaign_id": str(row.campaign_id),
-                        "campaign_name": row.campaign_name,
-                        "ad_group_id": row.ad_group_id,
-                        "ad_group_name": row.ad_group_name,
-                        "keyword_id": str(row.keyword_id) if row.keyword_id else None,
-                        "keyword": row.keyword,
-                        "match_type": row.match_type,
-                        "search_term": row.search_term,
-                        "negative_match_type": "phrase",
-                        "profile_id": row.profile_id,
-                        "country_code": row.country_code,
-                        "marketplace": row.marketplace,
-                        "currency": row.currency,
-                        "data_window": context,
-                        "spend": spend,
-                        "clicks": clicks,
-                        "sales": safe_float(row.sales),
-                        "orders": safe_int(row.orders),
-                        "acos": row.acos,
-                        "roas": row.roas,
-                    },
+                    payload=payload,
                 )
             )
 

@@ -1,15 +1,10 @@
 """
-Business OS v5.0.3
-Business Plan Engine — Explainability Release
+Business OS v5.0.4
+Business Plan Engine — Risk Alignment
 
-Adds:
-- included_actions
-- excluded_actions
-- explicit exclusion reasons
-- supported action diagnostics
-
-This fixes the confusing case where Mission Control showed open decisions,
-but Current Plan showed action_count=0 with no explanation.
+Updates:
+- Uses payload.risk_assessment.overall_risk when present.
+- Negative keyword decisions now flow into plans when their assessed risk is LOW.
 """
 
 from datetime import datetime
@@ -36,6 +31,13 @@ def _safe_float(value, default=0):
         return float(value or default)
     except Exception:
         return default
+
+
+def _effective_risk(action):
+    payload = action.get("payload") if isinstance(action.get("payload"), dict) else {}
+    assessment = payload.get("risk_assessment") if isinstance(payload.get("risk_assessment"), dict) else {}
+
+    return assessment.get("overall_risk") or action.get("risk")
 
 
 def _risk_score(risk):
@@ -91,13 +93,16 @@ def _weighted_confidence(actions):
 
 def _action_payload(action):
     payload = action.get("payload") if isinstance(action.get("payload"), dict) else {}
+    effective_risk = _effective_risk(action)
 
     return {
         "decision_id": action.get("id"),
         "decision": action.get("decision"),
         "priority": action.get("priority"),
         "confidence": action.get("confidence"),
-        "risk": action.get("risk"),
+        "risk": effective_risk,
+        "original_risk": action.get("risk"),
+        "risk_assessment": payload.get("risk_assessment"),
         "recommended_action": action.get("recommended_action"),
         "estimated_monthly_impact": action.get("estimated_monthly_impact"),
         "campaign_id": payload.get("campaign_id"),
@@ -155,7 +160,7 @@ def _decision_exclusion_reasons(
 
     decision_type = action.get("decision")
     confidence = _safe_float(action.get("confidence"))
-    risk = str(action.get("risk") or "").upper()
+    risk = str(_effective_risk(action) or "").upper()
     payload = action.get("payload") if isinstance(action.get("payload"), dict) else {}
 
     if decision_type not in allowed_actions:
@@ -211,7 +216,8 @@ def _filter_actions_with_explainability(
                 "decision": raw_action.get("decision"),
                 "recommended_action": raw_action.get("recommended_action"),
                 "confidence": raw_action.get("confidence"),
-                "risk": raw_action.get("risk"),
+                "risk": _effective_risk(raw_action),
+                "original_risk": raw_action.get("risk"),
                 "estimated_monthly_impact": raw_action.get("estimated_monthly_impact"),
                 "reasons": reasons,
                 "payload_summary": {
@@ -221,6 +227,7 @@ def _filter_actions_with_explainability(
                     "search_term": action.get("search_term"),
                     "country_code": action.get("country_code"),
                     "data_window": action.get("data_window"),
+                    "risk_assessment": action.get("risk_assessment"),
                 },
             })
             continue
@@ -246,6 +253,7 @@ def _filter_actions_with_explainability(
             "recommended_action": action.get("recommended_action"),
             "confidence": action.get("confidence"),
             "risk": action.get("risk"),
+            "original_risk": action.get("original_risk"),
             "estimated_monthly_impact": action.get("estimated_monthly_impact"),
             "reasons": [f"Excluded because max_actions={max_actions} was reached."],
             "payload_summary": {
@@ -255,6 +263,7 @@ def _filter_actions_with_explainability(
                 "search_term": action.get("search_term"),
                 "country_code": action.get("country_code"),
                 "data_window": action.get("data_window"),
+                "risk_assessment": action.get("risk_assessment"),
             },
         })
 
@@ -348,7 +357,7 @@ def build_business_plan(
         2,
     )
 
-    plan = {
+    return {
         "status": "OK",
         "plan_type": "BUSINESS_OPTIMIZATION_PLAN",
         "created_at": datetime.utcnow().isoformat(),
@@ -384,6 +393,7 @@ def build_business_plan(
             "decision_history_count": decision_response.get("count"),
             "decision_history_current_window_only": decision_response.get("current_window_only"),
             "data_context": data_context,
+            "risk_source": "payload.risk_assessment.overall_risk when present, otherwise decision.risk",
         },
         "constraints": {
             "min_confidence": min_confidence,
@@ -393,14 +403,11 @@ def build_business_plan(
         },
         "next_steps": [
             "Review included and excluded actions.",
-            "If good actions are excluded only because risk is HIGH, rerun with include_high_risk=true.",
             "Dry-run selected actions through the execution engine.",
             "Execute live only after approval.",
             "Evaluate results after 1, 3, and 7 days.",
         ],
     }
-
-    return plan
 
 
 def simulate_business_plan(plan):
@@ -465,6 +472,7 @@ def get_plan_summary(plan):
                 "estimated_monthly_impact": action.get("estimated_monthly_impact"),
                 "confidence": action.get("confidence"),
                 "risk": action.get("risk"),
+                "original_risk": action.get("original_risk"),
                 "campaign_name": action.get("campaign_name"),
                 "search_term": action.get("search_term"),
             }
@@ -477,6 +485,7 @@ def get_plan_summary(plan):
                 "recommended_action": action.get("recommended_action"),
                 "confidence": action.get("confidence"),
                 "risk": action.get("risk"),
+                "original_risk": action.get("original_risk"),
                 "reasons": action.get("reasons"),
             }
             for action in plan.get("excluded_actions", [])[:10]
