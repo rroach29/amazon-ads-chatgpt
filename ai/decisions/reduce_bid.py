@@ -54,6 +54,9 @@ def get_reduce_bid_decisions(limit=25):
         rows = (
             db.query(SearchTermDailyDetail)
             .filter(SearchTermDailyDetail.channel == "amazon_ads")
+            .filter(SearchTermDailyDetail.profile_id.isnot(None))
+            .filter(SearchTermDailyDetail.country_code.isnot(None))
+            .filter(SearchTermDailyDetail.keyword_id.isnot(None))
             .filter(SearchTermDailyDetail.spend >= REDUCE_BID_MIN_SPEND)
             .filter(SearchTermDailyDetail.clicks >= REDUCE_BID_MIN_CLICKS)
             .filter(SearchTermDailyDetail.orders >= REDUCE_BID_MIN_ORDERS)
@@ -122,14 +125,20 @@ def get_reduce_bid_decisions(limit=25):
                         f'"{search_term}" in {row.campaign_name}.'
                     ),
                     payload={
-                        "campaign_id": row.campaign_id,
+                        "campaign_id": str(row.campaign_id),
                         "campaign_name": row.campaign_name,
                         "ad_group_id": row.ad_group_id,
                         "ad_group_name": row.ad_group_name,
-                        "search_term": search_term,
+                        "keyword_id": str(row.keyword_id),
                         "keyword": row.keyword,
                         "match_type": row.match_type,
+                        "profile_id": row.profile_id,
+                        "country_code": row.country_code,
+                        "marketplace": row.marketplace,
+                        "currency": row.currency,
+                        "search_term": search_term,
                         "suggested_bid_reduction_percent": reduction_percent,
+                        "reduction_percent": reduction_percent,
                         "spend": spend,
                         "clicks": clicks,
                         "sales": sales,

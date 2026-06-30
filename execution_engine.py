@@ -1,14 +1,11 @@
 """
-Business OS v3.7.1
-Execution Engine with Live Budget Validation Fix
+Business OS v3.8.0
+Execution Engine with Bid Management
 
-Fix:
-- INCREASE_BUDGET / DECREASE_BUDGET no longer require current_budget in the decision payload
-  when a percent/amount is present.
-- amazon_execution.py is responsible for fetching the live Amazon budget and calculating
-  before/after budget values.
+Adds live-supported REDUCE_BID.
 
-This keeps budget decisions lightweight while preserving safety.
+REDUCE_BID does not require current_bid in the decision payload.
+amazon_execution.py fetches the live current bid before calculating the new bid.
 """
 
 from datetime import datetime
@@ -41,6 +38,7 @@ LIVE_SUPPORTED_ACTIONS = {
     "INCREASE_BUDGET",
     "DECREASE_BUDGET",
     "SET_BUDGET",
+    "REDUCE_BID",
 }
 
 
@@ -146,7 +144,7 @@ def _validate_execution(
 
     payload = payload_override if isinstance(payload_override, dict) else _payload_dict(decision)
 
-    if action in ["PAUSE_CAMPAIGN", "RESUME_CAMPAIGN", "INCREASE_BUDGET", "DECREASE_BUDGET", "SET_BUDGET"]:
+    if action in ["PAUSE_CAMPAIGN", "RESUME_CAMPAIGN", "INCREASE_BUDGET", "DECREASE_BUDGET", "SET_BUDGET", "REDUCE_BID"]:
         if not _get_payload_value(payload, "campaign_id", "campaignId"):
             errors.append("Campaign action requires campaign_id in decision payload.")
 
@@ -154,12 +152,12 @@ def _validate_execution(
             context = marketplace_context if isinstance(marketplace_context, dict) else {}
             if not context.get("profile_id") or not context.get("country_code"):
                 errors.append(
-                    "Live campaign execution requires resolved profile_id and country_code from CampaignDailyDetail."
+                    "Live execution requires resolved profile_id and country_code from marketplace-aware data."
                 )
 
     if action in ["SET_BID", "REDUCE_BID"]:
-        if not _get_payload_value(payload, "target_id", "targetId", "keyword_id", "keywordId"):
-            errors.append("Bid action requires target_id or keyword_id in decision payload.")
+        if not _get_payload_value(payload, "keyword_id", "keywordId"):
+            errors.append("Bid action requires keyword_id in decision payload.")
 
     if action in ["ADD_NEGATIVE_KEYWORD"]:
         if not payload.get("search_term"):
@@ -198,13 +196,9 @@ def _validate_execution(
             "decrease_amount",
         )
 
-        # SET_BUDGET needs a final budget.
         if action == "SET_BUDGET" and _to_float(candidate_budget) is None:
             errors.append("SET_BUDGET requires new_budget/budget/recommended_budget in decision payload.")
 
-        # v3.7.1 fix:
-        # INCREASE_BUDGET / DECREASE_BUDGET should NOT require current_budget here.
-        # amazon_execution.py fetches the live current budget before calculating the new budget.
         if action in ["INCREASE_BUDGET", "DECREASE_BUDGET"]:
             has_final_budget = _to_float(candidate_budget) is not None
             has_delta = _to_float(percent) is not None or _to_float(amount) is not None
@@ -214,6 +208,47 @@ def _validate_execution(
                     f"{action} requires either a final budget, percent, or amount. "
                     "current_budget is fetched live from Amazon during execution."
                 )
+
+    if action in ["REDUCE_BID"]:
+        candidate_bid = _get_payload_value(
+            payload,
+            "new_bid",
+            "newBid",
+            "bid",
+            "target_bid",
+            "targetBid",
+            "recommended_bid",
+            "recommendedBid",
+        )
+
+        percent = _get_payload_value(
+            payload,
+            "percent",
+            "percentage",
+            "reduce_percent",
+            "reduction_percent",
+            "decrease_percent",
+            "change_percent",
+            "suggested_bid_reduction_percent",
+            "suggestedBidReductionPercent",
+        )
+
+        amount = _get_payload_value(
+            payload,
+            "amount",
+            "change_amount",
+            "reduce_amount",
+            "decrease_amount",
+        )
+
+        has_final_bid = _to_float(candidate_bid) is not None
+        has_delta = _to_float(percent) is not None or _to_float(amount) is not None
+
+        if not has_final_bid and not has_delta:
+            errors.append(
+                "REDUCE_BID requires either a final bid, reduction percent, or amount. "
+                "current_bid is fetched live from Amazon during execution."
+            )
 
     return errors
 
@@ -228,17 +263,10 @@ def create_execution_job(
     db = SessionLocal()
 
     try:
-        decision = (
-            db.query(DecisionHistory)
-            .filter(DecisionHistory.id == decision_id)
-            .first()
-        )
+        decision = db.query(DecisionHistory).filter(DecisionHistory.id == decision_id).first()
 
         if not decision:
-            return {
-                "status": "ERROR",
-                "message": f"Decision {decision_id} not found.",
-            }
+            return {"status": "ERROR", "message": f"Decision {decision_id} not found."}
 
         action = decision.decision
         raw_context = _extract_marketplace_from_decision(decision)
@@ -248,7 +276,7 @@ def create_execution_job(
         enriched_payload = raw_payload
         marketplace_context = raw_context
 
-        if action in ["PAUSE_CAMPAIGN", "RESUME_CAMPAIGN", "INCREASE_BUDGET", "DECREASE_BUDGET", "SET_BUDGET"]:
+        if action in ["PAUSE_CAMPAIGN", "RESUME_CAMPAIGN", "INCREASE_BUDGET", "DECREASE_BUDGET", "SET_BUDGET", "REDUCE_BID"]:
             identity_result = enrich_payload_with_campaign_identity(
                 payload=raw_payload,
                 existing_context=raw_context,
@@ -261,7 +289,7 @@ def create_execution_job(
         validation_errors = []
 
         if (
-            action in ["PAUSE_CAMPAIGN", "RESUME_CAMPAIGN", "INCREASE_BUDGET", "DECREASE_BUDGET", "SET_BUDGET"]
+            action in ["PAUSE_CAMPAIGN", "RESUME_CAMPAIGN", "INCREASE_BUDGET", "DECREASE_BUDGET", "SET_BUDGET", "REDUCE_BID"]
             and identity_result.get("status") != "OK"
         ):
             validation_errors.append(
@@ -324,11 +352,7 @@ def create_execution_job(
 
     except Exception as exc:
         db.rollback()
-        return {
-            "status": "ERROR",
-            "message": "Failed to create execution job.",
-            "error": str(exc),
-        }
+        return {"status": "ERROR", "message": "Failed to create execution job.", "error": str(exc)}
 
     finally:
         db.close()
@@ -361,7 +385,7 @@ def run_execution_job(execution_job_id, confirm_live=False):
         if not job.dry_run and (not job.profile_id or not job.country_code):
             return {
                 "status": "REJECTED",
-                "message": "Live execution rejected because campaign identity was not resolved to profile_id/country_code.",
+                "message": "Live execution rejected because identity was not resolved to profile_id/country_code.",
                 "execution_job_id": job.id,
             }
 
@@ -408,7 +432,7 @@ def run_execution_job(execution_job_id, confirm_live=False):
                 decision.status = "EXECUTED"
                 decision.outcome = "EXECUTED_LIVE"
                 decision.evaluated_at = datetime.utcnow()
-                decision.notes = "Executed live through Business OS v3.7.1."
+                decision.notes = "Executed live through Business OS v3.8.0."
 
         db.commit()
         db.refresh(result)

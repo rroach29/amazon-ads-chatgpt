@@ -1,10 +1,8 @@
 """
-Business OS v3.6.1b
-Execution Registry Import Fix
+Business OS v3.8.0
+Execution Registry
 
-This file restores execute_registered_action(), which execution_engine.py imports.
-
-It also keeps the v3.6.1 action metadata used by the planner.
+Adds live support for REDUCE_BID.
 """
 
 from amazon_execution import execute_amazon_action
@@ -58,23 +56,24 @@ ACTION_REGISTRY = {
     },
     "REDUCE_BID": {
         "action": "REDUCE_BID",
-        "supported": False,
-        "live_supported": False,
+        "supported": True,
+        "live_supported": True,
         "platform": "amazon_ads",
-        "resource_type": "target",
-        "requires_campaign_identity": False,
+        "resource_type": "keyword",
+        "requires_campaign_identity": True,
+        "requires_keyword_id": True,
         "rollback_action": None,
-        "reason": "Bid execution is planned for a later release.",
     },
     "SET_BID": {
         "action": "SET_BID",
         "supported": False,
         "live_supported": False,
         "platform": "amazon_ads",
-        "resource_type": "target",
-        "requires_campaign_identity": False,
+        "resource_type": "keyword",
+        "requires_campaign_identity": True,
+        "requires_keyword_id": True,
         "rollback_action": None,
-        "reason": "Bid execution is planned for a later release.",
+        "reason": "Exact set-bid execution is planned after reduce-bid is verified.",
     },
     "ADD_NEGATIVE_KEYWORD": {
         "action": "ADD_NEGATIVE_KEYWORD",
@@ -132,12 +131,6 @@ def list_execution_actions():
 
 
 def execute_registered_action(action, profile_id, country_code, payload, dry_run=True):
-    """
-    Compatibility function required by execution_engine.py.
-
-    Delegates currently live-supported Amazon Ads actions to amazon_execution.py.
-    Unsupported actions return a structured failure instead of crashing import/runtime.
-    """
     metadata = get_action_metadata(action)
 
     if not metadata.get("supported"):
