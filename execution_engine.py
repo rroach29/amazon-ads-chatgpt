@@ -1,11 +1,18 @@
 """
-Business OS v3.4.1
-Execution Framework Engine
+Business OS v3.4.2
+Execution Engine with Amazon Ads Adapter
 
-This release creates execution jobs and dry-run execution results.
+v3.4.2 adds live Amazon Ads execution support for:
+- PAUSE_CAMPAIGN
+- RESUME_CAMPAIGN
+- SET_BUDGET
+- INCREASE_BUDGET
+- DECREASE_BUDGET
 
-It does NOT mutate Amazon Ads yet.
-Live Amazon API execution begins in v3.4.2.
+Safety:
+- dry_run=True remains the default.
+- Live execution requires dry_run=False and confirm_live=True.
+- Unsupported actions remain rejected before reaching Amazon.
 """
 
 from datetime import datetime
@@ -15,6 +22,7 @@ from database import SessionLocal
 from marketplace_profiles import get_marketplace_profile
 from models import DecisionHistory
 from execution_models import ExecutionJob, ExecutionResult
+from amazon_execution import execute_amazon_action
 
 
 SUPPORTED_ACTIONS = {
@@ -29,13 +37,25 @@ SUPPORTED_ACTIONS = {
     "PROMOTE_TO_EXACT",
 }
 
+LIVE_SUPPORTED_ACTIONS = {
+    "PAUSE_CAMPAIGN",
+    "RESUME_CAMPAIGN",
+    "INCREASE_BUDGET",
+    "DECREASE_BUDGET",
+    "SET_BUDGET",
+}
+
 
 def _normalize_country_code(country_code):
     return str(country_code).upper() if country_code else None
 
 
+def _payload_dict(decision):
+    return decision.payload if isinstance(decision.payload, dict) else {}
+
+
 def _decision_to_payload(decision):
-    payload = decision.payload if isinstance(decision.payload, dict) else {}
+    payload = _payload_dict(decision)
 
     return {
         "decision_id": decision.id,
@@ -50,7 +70,7 @@ def _decision_to_payload(decision):
 
 
 def _extract_marketplace_from_decision(decision):
-    payload = decision.payload if isinstance(decision.payload, dict) else {}
+    payload = _payload_dict(decision)
 
     country_code = (
         payload.get("country_code")
@@ -81,7 +101,22 @@ def _extract_marketplace_from_decision(decision):
     }
 
 
-def _validate_execution(decision, action, dry_run):
+def _get_payload_value(payload, *keys):
+    for key in keys:
+        value = payload.get(key)
+        if value is not None:
+            return value
+    return None
+
+
+def _to_float(value):
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+def _validate_execution(decision, action, dry_run, confirm_live=False):
     errors = []
 
     if not decision:
@@ -97,28 +132,88 @@ def _validate_execution(decision, action, dry_run):
     if action and action not in SUPPORTED_ACTIONS:
         errors.append(f"Unsupported execution action: {action}")
 
-    payload = decision.payload if isinstance(decision.payload, dict) else {}
+    if not dry_run:
+        if not confirm_live:
+            errors.append("Live execution requires confirm_live=true.")
+
+        if action not in LIVE_SUPPORTED_ACTIONS:
+            errors.append(f"Live execution is not yet supported for action: {action}")
+
+    payload = _payload_dict(decision)
 
     if action in ["PAUSE_CAMPAIGN", "RESUME_CAMPAIGN", "INCREASE_BUDGET", "DECREASE_BUDGET", "SET_BUDGET"]:
-        if not payload.get("campaign_id") and not payload.get("campaignId"):
+        if not _get_payload_value(payload, "campaign_id", "campaignId"):
             errors.append("Campaign action requires campaign_id in decision payload.")
 
     if action in ["SET_BID"]:
-        if not payload.get("target_id") and not payload.get("keyword_id"):
+        if not _get_payload_value(payload, "target_id", "targetId", "keyword_id", "keywordId"):
             errors.append("Bid action requires target_id or keyword_id in decision payload.")
 
     if action in ["ADD_NEGATIVE_KEYWORD"]:
         if not payload.get("search_term"):
             errors.append("Negative keyword action requires search_term in decision payload.")
 
-    # v3.4.1 is dry-run only. Do not allow live mutation yet.
-    if dry_run is False:
-        errors.append("Live execution is not enabled in v3.4.1. Use dry_run=true.")
+    if action in ["SET_BUDGET", "INCREASE_BUDGET", "DECREASE_BUDGET"]:
+        candidate_budget = _get_payload_value(
+            payload,
+            "new_budget",
+            "newBudget",
+            "budget",
+            "daily_budget",
+            "dailyBudget",
+            "recommended_budget",
+            "recommendedBudget",
+        )
+
+        current_budget = _get_payload_value(
+            payload,
+            "current_budget",
+            "currentBudget",
+            "existing_budget",
+            "existingBudget",
+        )
+
+        percent = _get_payload_value(
+            payload,
+            "percent",
+            "percentage",
+            "increase_percent",
+            "decrease_percent",
+            "change_percent",
+        )
+
+        amount = _get_payload_value(
+            payload,
+            "amount",
+            "change_amount",
+            "increase_amount",
+            "decrease_amount",
+        )
+
+        if action == "SET_BUDGET" and _to_float(candidate_budget) is None:
+            errors.append("SET_BUDGET requires new_budget/budget/recommended_budget in decision payload.")
+
+        if action in ["INCREASE_BUDGET", "DECREASE_BUDGET"]:
+            has_final_budget = _to_float(candidate_budget) is not None
+            has_delta = _to_float(current_budget) is not None and (
+                _to_float(percent) is not None or _to_float(amount) is not None
+            )
+
+            if not has_final_budget and not has_delta:
+                errors.append(
+                    f"{action} requires either a final budget or current_budget plus percent/amount."
+                )
 
     return errors
 
 
-def create_execution_job(decision_id, approved=True, dry_run=True, requested_by="GPT"):
+def create_execution_job(
+    decision_id,
+    approved=True,
+    dry_run=True,
+    requested_by="GPT",
+    confirm_live=False,
+):
     db = SessionLocal()
 
     try:
@@ -136,7 +231,12 @@ def create_execution_job(decision_id, approved=True, dry_run=True, requested_by=
 
         action = decision.decision
         marketplace_context = _extract_marketplace_from_decision(decision)
-        validation_errors = _validate_execution(decision, action, dry_run)
+        validation_errors = _validate_execution(
+            decision,
+            action,
+            dry_run=dry_run,
+            confirm_live=confirm_live,
+        )
 
         job_status = "APPROVED" if approved and not validation_errors else "REJECTED"
 
@@ -168,13 +268,14 @@ def create_execution_job(decision_id, approved=True, dry_run=True, requested_by=
                 "validation_errors": validation_errors,
             }
 
-        result = run_execution_job(job.id)
+        result = run_execution_job(job.id, confirm_live=confirm_live)
 
         return {
             "status": "OK",
             "message": "Execution job created.",
             "execution_job_id": job.id,
             "dry_run": dry_run,
+            "confirm_live": confirm_live,
             "result": result,
         }
 
@@ -190,7 +291,7 @@ def create_execution_job(decision_id, approved=True, dry_run=True, requested_by=
         db.close()
 
 
-def run_execution_job(execution_job_id):
+def run_execution_job(execution_job_id, confirm_live=False):
     db = SessionLocal()
     start = perf_counter()
 
@@ -214,51 +315,74 @@ def run_execution_job(execution_job_id):
                 "execution_job_id": job.id,
             }
 
+        if not job.dry_run and not confirm_live:
+            return {
+                "status": "REJECTED",
+                "message": "Live execution requires confirm_live=true.",
+                "execution_job_id": job.id,
+            }
+
         job.status = "RUNNING"
         job.started_at = datetime.utcnow()
         db.commit()
 
-        # v3.4.1 framework-only dry-run result.
-        simulated_response = {
-            "mode": "dry_run",
-            "action": job.action,
-            "decision_id": job.decision_id,
-            "profile_id": job.profile_id,
-            "country_code": job.country_code,
-            "marketplace": job.marketplace,
-            "message": "Dry-run execution succeeded. No Amazon Ads changes were made.",
-            "next_release": "v3.4.2 will replace this dry-run handler with live Amazon Ads API calls.",
-        }
+        job_payload = job.payload or {}
+        decision_payload = job_payload.get("payload", {}) if isinstance(job_payload, dict) else {}
+
+        adapter_result = execute_amazon_action(
+            action=job.action,
+            profile_id=job.profile_id,
+            country_code=job.country_code,
+            payload=decision_payload,
+            dry_run=job.dry_run,
+        )
 
         elapsed_ms = round((perf_counter() - start) * 1000, 2)
+
+        success = bool(adapter_result.get("success"))
+        result_status = "COMPLETED" if success else "FAILED"
 
         result = ExecutionResult(
             execution_job_id=job.id,
             decision_id=job.decision_id,
-            success=True,
-            dry_run=True,
-            amazon_request_id=None,
-            http_status=None,
+            success=success,
+            dry_run=job.dry_run,
+            amazon_request_id=adapter_result.get("amazon_request_id"),
+            http_status=adapter_result.get("http_status"),
             action=job.action,
-            status="COMPLETED",
-            response_json=simulated_response,
-            error_message=None,
+            status=result_status,
+            response_json=adapter_result,
+            error_message=adapter_result.get("error_message"),
             execution_time_ms=elapsed_ms,
         )
 
-        job.status = "COMPLETED"
+        job.status = result_status
         job.completed_at = datetime.utcnow()
 
         db.add(result)
+
+        if success and not job.dry_run:
+            decision = (
+                db.query(DecisionHistory)
+                .filter(DecisionHistory.id == job.decision_id)
+                .first()
+            )
+            if decision:
+                decision.status = "EXECUTED"
+                decision.outcome = "EXECUTED_LIVE"
+                decision.evaluated_at = datetime.utcnow()
+                decision.notes = "Executed live through Business OS v3.4.2."
+
         db.commit()
         db.refresh(result)
 
         return {
-            "status": "OK",
-            "message": "Dry-run execution completed.",
+            "status": "OK" if success else "ERROR",
+            "message": "Execution completed." if success else "Execution failed.",
             "execution_job_id": job.id,
             "execution_result_id": result.id,
-            "response": simulated_response,
+            "dry_run": job.dry_run,
+            "response": adapter_result,
         }
 
     except Exception as exc:

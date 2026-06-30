@@ -16,6 +16,7 @@ def execute_decision(
     decision_id: int,
     approved: bool = True,
     dry_run: bool = True,
+    confirm_live: bool = False,
     requested_by: str = "GPT",
     x_api_key: str = Header(...),
 ):
@@ -25,6 +26,7 @@ def execute_decision(
         approved=approved,
         dry_run=dry_run,
         requested_by=requested_by,
+        confirm_live=confirm_live,
     )
 
 
