@@ -40,6 +40,7 @@ from routes_budget_intelligence import router as budget_intelligence_router
 from routes_executive import router as executive_router
 from routes_domain import router as domain_router
 from routes_diagnostics import router as diagnostics_router
+from routes_planning import router as planning_router
 
 
 app = FastAPI(title="Business OS API")
@@ -82,6 +83,7 @@ app.include_router(budget_intelligence_router, prefix="/business-os", tags=["Bus
 app.include_router(executive_router, prefix="/business-os", tags=["Business OS Executive AI"])
 app.include_router(domain_router, prefix="/business-os", tags=["Business OS Domain Models"])
 app.include_router(diagnostics_router, prefix="/business-os", tags=["Business OS Diagnostics"])
+app.include_router(planning_router, prefix="/business-os", tags=["Business OS Executive Planning"])
 
 
 @app.get("/")
