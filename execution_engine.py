@@ -1,18 +1,10 @@
 """
-Business OS v3.4.2
-Execution Engine with Amazon Ads Adapter
+Business OS v3.4.2b
+Execution Engine with Campaign Identity Resolver
 
-v3.4.2 adds live Amazon Ads execution support for:
-- PAUSE_CAMPAIGN
-- RESUME_CAMPAIGN
-- SET_BUDGET
-- INCREASE_BUDGET
-- DECREASE_BUDGET
-
-Safety:
-- dry_run=True remains the default.
-- Live execution requires dry_run=False and confirm_live=True.
-- Unsupported actions remain rejected before reaching Amazon.
+Adds a critical safety layer:
+- Resolve campaign_id to the correct marketplace/profile before Amazon live execution.
+- Reject live execution if campaign identity is missing, stale, or ambiguous.
 """
 
 from datetime import datetime
@@ -23,6 +15,7 @@ from marketplace_profiles import get_marketplace_profile
 from models import DecisionHistory
 from execution_models import ExecutionJob, ExecutionResult
 from amazon_execution import execute_amazon_action
+from campaign_identity import enrich_payload_with_campaign_identity
 
 
 SUPPORTED_ACTIONS = {
@@ -54,8 +47,8 @@ def _payload_dict(decision):
     return decision.payload if isinstance(decision.payload, dict) else {}
 
 
-def _decision_to_payload(decision):
-    payload = _payload_dict(decision)
+def _decision_to_payload(decision, enriched_payload=None):
+    payload = enriched_payload if isinstance(enriched_payload, dict) else _payload_dict(decision)
 
     return {
         "decision_id": decision.id,
@@ -116,7 +109,7 @@ def _to_float(value):
         return None
 
 
-def _validate_execution(decision, action, dry_run, confirm_live=False):
+def _validate_execution(decision, action, dry_run, confirm_live=False, marketplace_context=None, payload_override=None):
     errors = []
 
     if not decision:
@@ -139,11 +132,19 @@ def _validate_execution(decision, action, dry_run, confirm_live=False):
         if action not in LIVE_SUPPORTED_ACTIONS:
             errors.append(f"Live execution is not yet supported for action: {action}")
 
-    payload = _payload_dict(decision)
+    payload = payload_override if isinstance(payload_override, dict) else _payload_dict(decision)
 
     if action in ["PAUSE_CAMPAIGN", "RESUME_CAMPAIGN", "INCREASE_BUDGET", "DECREASE_BUDGET", "SET_BUDGET"]:
         if not _get_payload_value(payload, "campaign_id", "campaignId"):
             errors.append("Campaign action requires campaign_id in decision payload.")
+
+        # Critical v3.4.2b safety check.
+        if not dry_run:
+            context = marketplace_context if isinstance(marketplace_context, dict) else {}
+            if not context.get("profile_id") or not context.get("country_code"):
+                errors.append(
+                    "Live campaign execution requires resolved profile_id and country_code from CampaignDailyDetail."
+                )
 
     if action in ["SET_BID"]:
         if not _get_payload_value(payload, "target_id", "targetId", "keyword_id", "keywordId"):
@@ -200,9 +201,7 @@ def _validate_execution(decision, action, dry_run, confirm_live=False):
             )
 
             if not has_final_budget and not has_delta:
-                errors.append(
-                    f"{action} requires either a final budget or current_budget plus percent/amount."
-                )
+                errors.append(f"{action} requires either a final budget or current_budget plus percent/amount.")
 
     return errors
 
@@ -230,12 +229,42 @@ def create_execution_job(
             }
 
         action = decision.decision
-        marketplace_context = _extract_marketplace_from_decision(decision)
-        validation_errors = _validate_execution(
-            decision,
-            action,
-            dry_run=dry_run,
-            confirm_live=confirm_live,
+        raw_context = _extract_marketplace_from_decision(decision)
+        raw_payload = _payload_dict(decision)
+
+        identity_result = {"status": "SKIPPED", "message": "No campaign identity lookup required."}
+        enriched_payload = raw_payload
+        marketplace_context = raw_context
+
+        if action in ["PAUSE_CAMPAIGN", "RESUME_CAMPAIGN", "INCREASE_BUDGET", "DECREASE_BUDGET", "SET_BUDGET"]:
+            identity_result = enrich_payload_with_campaign_identity(
+                payload=raw_payload,
+                existing_context=raw_context,
+            )
+
+            if identity_result.get("status") == "OK":
+                enriched_payload = identity_result.get("payload", raw_payload)
+                marketplace_context = identity_result.get("context", raw_context)
+
+        validation_errors = []
+
+        if (
+            action in ["PAUSE_CAMPAIGN", "RESUME_CAMPAIGN", "INCREASE_BUDGET", "DECREASE_BUDGET", "SET_BUDGET"]
+            and identity_result.get("status") != "OK"
+        ):
+            validation_errors.append(
+                f"Campaign identity could not be resolved safely: {identity_result.get('message')}"
+            )
+
+        validation_errors.extend(
+            _validate_execution(
+                decision,
+                action,
+                dry_run=dry_run,
+                confirm_live=confirm_live,
+                marketplace_context=marketplace_context,
+                payload_override=enriched_payload,
+            )
         )
 
         job_status = "APPROVED" if approved and not validation_errors else "REJECTED"
@@ -251,7 +280,7 @@ def create_execution_job(
             status=job_status,
             dry_run=dry_run,
             requested_by=requested_by,
-            payload=_decision_to_payload(decision),
+            payload=_decision_to_payload(decision, enriched_payload=enriched_payload),
             validation_errors=validation_errors,
             approved_at=datetime.utcnow() if approved and not validation_errors else None,
         )
@@ -265,6 +294,7 @@ def create_execution_job(
                 "status": "REJECTED",
                 "message": "Execution job was rejected by validation.",
                 "execution_job_id": job.id,
+                "identity_resolution": identity_result,
                 "validation_errors": validation_errors,
             }
 
@@ -276,6 +306,7 @@ def create_execution_job(
             "execution_job_id": job.id,
             "dry_run": dry_run,
             "confirm_live": confirm_live,
+            "identity_resolution": identity_result,
             "result": result,
         }
 
@@ -296,17 +327,10 @@ def run_execution_job(execution_job_id, confirm_live=False):
     start = perf_counter()
 
     try:
-        job = (
-            db.query(ExecutionJob)
-            .filter(ExecutionJob.id == execution_job_id)
-            .first()
-        )
+        job = db.query(ExecutionJob).filter(ExecutionJob.id == execution_job_id).first()
 
         if not job:
-            return {
-                "status": "ERROR",
-                "message": f"Execution job {execution_job_id} not found.",
-            }
+            return {"status": "ERROR", "message": f"Execution job {execution_job_id} not found."}
 
         if job.status not in ["APPROVED", "PENDING"]:
             return {
@@ -319,6 +343,13 @@ def run_execution_job(execution_job_id, confirm_live=False):
             return {
                 "status": "REJECTED",
                 "message": "Live execution requires confirm_live=true.",
+                "execution_job_id": job.id,
+            }
+
+        if not job.dry_run and (not job.profile_id or not job.country_code):
+            return {
+                "status": "REJECTED",
+                "message": "Live execution rejected because campaign identity was not resolved to profile_id/country_code.",
                 "execution_job_id": job.id,
             }
 
@@ -338,7 +369,6 @@ def run_execution_job(execution_job_id, confirm_live=False):
         )
 
         elapsed_ms = round((perf_counter() - start) * 1000, 2)
-
         success = bool(adapter_result.get("success"))
         result_status = "COMPLETED" if success else "FAILED"
 
@@ -358,20 +388,15 @@ def run_execution_job(execution_job_id, confirm_live=False):
 
         job.status = result_status
         job.completed_at = datetime.utcnow()
-
         db.add(result)
 
         if success and not job.dry_run:
-            decision = (
-                db.query(DecisionHistory)
-                .filter(DecisionHistory.id == job.decision_id)
-                .first()
-            )
+            decision = db.query(DecisionHistory).filter(DecisionHistory.id == job.decision_id).first()
             if decision:
                 decision.status = "EXECUTED"
                 decision.outcome = "EXECUTED_LIVE"
                 decision.evaluated_at = datetime.utcnow()
-                decision.notes = "Executed live through Business OS v3.4.2."
+                decision.notes = "Executed live through Business OS v3.4.2b with campaign identity resolution."
 
         db.commit()
         db.refresh(result)
@@ -389,18 +414,11 @@ def run_execution_job(execution_job_id, confirm_live=False):
         db.rollback()
 
         try:
-            job = (
-                db.query(ExecutionJob)
-                .filter(ExecutionJob.id == execution_job_id)
-                .first()
-            )
-
+            job = db.query(ExecutionJob).filter(ExecutionJob.id == execution_job_id).first()
             if job:
                 job.status = "FAILED"
                 job.completed_at = datetime.utcnow()
-
                 elapsed_ms = round((perf_counter() - start) * 1000, 2)
-
                 result = ExecutionResult(
                     execution_job_id=job.id,
                     decision_id=job.decision_id,
@@ -411,10 +429,8 @@ def run_execution_job(execution_job_id, confirm_live=False):
                     error_message=str(exc),
                     execution_time_ms=elapsed_ms,
                 )
-
                 db.add(result)
                 db.commit()
-
         except Exception:
             db.rollback()
 
@@ -431,43 +447,22 @@ def run_execution_job(execution_job_id, confirm_live=False):
 
 def list_execution_jobs(status=None, limit=50):
     db = SessionLocal()
-
     try:
         query = db.query(ExecutionJob).order_by(ExecutionJob.created_at.desc())
-
         if status:
             query = query.filter(ExecutionJob.status == status)
-
         rows = query.limit(limit).all()
-
-        return {
-            "status": "OK",
-            "count": len(rows),
-            "items": [
-                serialize_execution_job(row)
-                for row in rows
-            ],
-        }
-
+        return {"status": "OK", "count": len(rows), "items": [serialize_execution_job(row) for row in rows]}
     finally:
         db.close()
 
 
 def get_execution_job(execution_job_id):
     db = SessionLocal()
-
     try:
-        job = (
-            db.query(ExecutionJob)
-            .filter(ExecutionJob.id == execution_job_id)
-            .first()
-        )
-
+        job = db.query(ExecutionJob).filter(ExecutionJob.id == execution_job_id).first()
         if not job:
-            return {
-                "status": "NO_DATA",
-                "message": f"Execution job {execution_job_id} not found.",
-            }
+            return {"status": "NO_DATA", "message": f"Execution job {execution_job_id} not found."}
 
         results = (
             db.query(ExecutionResult)
@@ -479,31 +474,18 @@ def get_execution_job(execution_job_id):
         return {
             "status": "OK",
             "job": serialize_execution_job(job),
-            "results": [
-                serialize_execution_result(row)
-                for row in results
-            ],
+            "results": [serialize_execution_result(row) for row in results],
         }
-
     finally:
         db.close()
 
 
 def cancel_execution_job(execution_job_id):
     db = SessionLocal()
-
     try:
-        job = (
-            db.query(ExecutionJob)
-            .filter(ExecutionJob.id == execution_job_id)
-            .first()
-        )
-
+        job = db.query(ExecutionJob).filter(ExecutionJob.id == execution_job_id).first()
         if not job:
-            return {
-                "status": "NO_DATA",
-                "message": f"Execution job {execution_job_id} not found.",
-            }
+            return {"status": "NO_DATA", "message": f"Execution job {execution_job_id} not found."}
 
         if job.status in ["COMPLETED", "FAILED", "CANCELLED"]:
             return {
@@ -516,12 +498,7 @@ def cancel_execution_job(execution_job_id):
         job.completed_at = datetime.utcnow()
         db.commit()
 
-        return {
-            "status": "OK",
-            "message": "Execution job cancelled.",
-            "job": serialize_execution_job(job),
-        }
-
+        return {"status": "OK", "message": "Execution job cancelled.", "job": serialize_execution_job(job)}
     finally:
         db.close()
 
