@@ -26,6 +26,9 @@ from routes_admin import router as admin_router
 from routes_gpt import router as gpt_router
 from routes_execution_v34 import router as execution_v34_router
 from routes_campaign_identity import router as campaign_identity_router
+from routes_execution_audit import router as execution_audit_router
+from routes_execution_batch import router as execution_batch_router
+
 
 app = FastAPI(title="Business OS API")
 
@@ -53,6 +56,8 @@ app.include_router(profiles_router, prefix="/profiles", tags=["Amazon Ads Profil
 app.include_router(admin_router, prefix="/admin", tags=["Admin"])
 app.include_router(gpt_router, prefix="/gpt", tags=["GPT Optimized"])
 app.include_router(campaign_identity_router, prefix="/business-os", tags=["Business OS Campaign Identity"])
+app.include_router(execution_audit_router, prefix="/business-os", tags=["Business OS Execution Audit"])
+
 
 @app.get("/")
 def root():

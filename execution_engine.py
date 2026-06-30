@@ -14,7 +14,7 @@ from database import SessionLocal
 from marketplace_profiles import get_marketplace_profile
 from models import DecisionHistory
 from execution_models import ExecutionJob, ExecutionResult
-from amazon_execution import execute_amazon_action
+from execution_registry import execute_registered_action
 from campaign_identity import enrich_payload_with_campaign_identity
 
 
@@ -360,7 +360,7 @@ def run_execution_job(execution_job_id, confirm_live=False):
         job_payload = job.payload or {}
         decision_payload = job_payload.get("payload", {}) if isinstance(job_payload, dict) else {}
 
-        adapter_result = execute_amazon_action(
+        adapter_result = execute_registered_action(
             action=job.action,
             profile_id=job.profile_id,
             country_code=job.country_code,
