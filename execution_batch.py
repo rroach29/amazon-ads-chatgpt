@@ -1,77 +1,67 @@
 """
-Business OS v3.6.0
+Business OS v3.6.1
 Batch Execution
 
-Queues and executes multiple decisions through the existing v3.4/v3.5 execution
-pipeline. Dry-run remains the default.
+Uses the enriched execution plan before executing any decisions.
 """
 
 from execution_planner import build_execution_plan
-from execution_engine import create_execution_job, list_execution_jobs
+from execution_engine import create_execution_job
 
 
-def execute_decision_batch(
-    decision_ids,
-    approved=True,
-    dry_run=True,
-    confirm_live=False,
-    requested_by="GPT",
-    stop_on_error=True,
-):
-    plan = build_execution_plan(decision_ids, dry_run=dry_run)
+def execute_batch(decision_ids, dry_run=True, confirm_live=False, requested_by="GPT"):
+    plan = build_execution_plan(decision_ids=decision_ids, dry_run=dry_run)
 
-    if plan.get("missing_decision_ids"):
+    if plan.get("status") != "OK":
+        return plan
+
+    limit_check = plan.get("limit_check", {})
+    if not limit_check.get("ok"):
         return {
             "status": "REJECTED",
-            "message": "One or more decision IDs were not found.",
-            "plan": plan,
-        }
-
-    if not plan.get("limit_check", {}).get("ok"):
-        return {
-            "status": "REJECTED",
-            "message": "Batch failed safety limit validation.",
-            "plan": plan,
-        }
-
-    if not dry_run and not confirm_live:
-        return {
-            "status": "REJECTED",
-            "message": "Live batch execution requires confirm_live=true.",
+            "message": "Batch failed execution limit validation.",
             "plan": plan,
         }
 
     results = []
-    failures = []
 
     for step in plan.get("steps", []):
-        decision_id = step.get("decision_id")
-        result = create_execution_job(
-            decision_id=decision_id,
-            approved=approved,
-            dry_run=dry_run,
-            confirm_live=confirm_live,
-            requested_by=requested_by,
-        )
-        results.append(result)
+        if not step.get("ready_for_live_execution") and not dry_run:
+            results.append({
+                "decision_id": step.get("decision_id"),
+                "status": "SKIPPED",
+                "message": "Decision is not ready for live execution.",
+                "blockers": step.get("blockers"),
+            })
+            continue
 
-        if result.get("status") not in ["OK"]:
-            failures.append({"decision_id": decision_id, "result": result})
-            if stop_on_error:
-                break
+        if step.get("metadata", {}).get("supported") is False:
+            results.append({
+                "decision_id": step.get("decision_id"),
+                "status": "SKIPPED",
+                "message": "Action is not supported yet.",
+                "metadata": step.get("metadata"),
+            })
+            continue
+
+        result = create_execution_job(
+            decision_id=step.get("decision_id"),
+            approved=True,
+            dry_run=dry_run,
+            requested_by=requested_by,
+            confirm_live=confirm_live,
+        )
+
+        results.append({
+            "decision_id": step.get("decision_id"),
+            "status": result.get("status"),
+            "result": result,
+        })
 
     return {
-        "status": "OK" if not failures else "PARTIAL_SUCCESS",
-        "message": "Batch execution completed." if not failures else "Batch execution completed with failures.",
+        "status": "OK",
         "dry_run": dry_run,
         "confirm_live": confirm_live,
-        "planned": len(plan.get("steps", [])),
-        "attempted": len(results),
-        "failures": failures,
         "plan": plan,
         "results": results,
     }
-
-
-def get_execution_queue(status="APPROVED", limit=50):
-    return list_execution_jobs(status=status, limit=limit)

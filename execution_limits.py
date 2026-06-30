@@ -1,11 +1,11 @@
 """
-Business OS v3.6.0
+Business OS v3.6.1
 Execution Limits
 
-Central safety limits for batch execution. These are deliberately conservative.
+Centralized safety limits for execution planning and batch execution.
 """
 
-DEFAULT_LIMITS = {
+DEFAULT_EXECUTION_LIMITS = {
     "max_batch_size": 10,
     "max_live_batch_size": 5,
     "max_high_risk_live_items": 0,
@@ -16,43 +16,63 @@ DEFAULT_LIMITS = {
 
 
 def get_execution_limits():
-    return {"status": "OK", "limits": DEFAULT_LIMITS}
+    return {
+        "status": "OK",
+        "limits": DEFAULT_EXECUTION_LIMITS,
+    }
 
 
-def evaluate_batch_limits(decisions, dry_run=True, limits=None):
-    limits = limits or DEFAULT_LIMITS
-    decisions = decisions or []
+def check_batch_limits(steps, dry_run=True):
     errors = []
     warnings = []
 
-    if len(decisions) > limits["max_batch_size"]:
-        errors.append(f"Batch size {len(decisions)} exceeds max_batch_size {limits['max_batch_size']}.")
+    limits = DEFAULT_EXECUTION_LIMITS
+    steps = steps or []
 
-    if not dry_run and len(decisions) > limits["max_live_batch_size"]:
-        errors.append(f"Live batch size {len(decisions)} exceeds max_live_batch_size {limits['max_live_batch_size']}.")
+    if len(steps) > limits["max_batch_size"]:
+        errors.append(
+            f"Batch has {len(steps)} items; maximum is {limits['max_batch_size']}."
+        )
 
-    high_risk = [d for d in decisions if str(d.get("risk") or "").upper() == "HIGH"]
-    if not dry_run and len(high_risk) > limits["max_high_risk_live_items"]:
-        errors.append("Live batch contains HIGH risk decisions, which are blocked by policy.")
+    if not dry_run and len(steps) > limits["max_live_batch_size"]:
+        errors.append(
+            f"Live batch has {len(steps)} items; maximum live batch size is {limits['max_live_batch_size']}."
+        )
 
-    for decision in decisions:
-        confidence = decision.get("confidence") or 0
-        try:
-            confidence = float(confidence)
-        except Exception:
-            confidence = 0
+    high_risk_count = sum(1 for step in steps if step.get("risk") == "HIGH")
+    if not dry_run and high_risk_count > limits["max_high_risk_live_items"]:
+        errors.append("High-risk decisions cannot be batch executed live.")
 
-        if not dry_run and confidence < limits["min_live_confidence"]:
-            errors.append(
-                f"Decision {decision.get('id')} confidence {confidence} is below live threshold {limits['min_live_confidence']}."
+    for step in steps:
+        if not dry_run:
+            confidence = step.get("confidence") or 0
+            if confidence < limits["min_live_confidence"]:
+                errors.append(
+                    f"Decision {step.get('decision_id')} confidence {confidence} is below live minimum {limits['min_live_confidence']}."
+                )
+
+            if step.get("priority") not in limits["allowed_live_priorities"]:
+                errors.append(
+                    f"Decision {step.get('decision_id')} priority {step.get('priority')} is not allowed for live execution."
+                )
+
+            if step.get("risk") in limits["blocked_live_risks"]:
+                errors.append(
+                    f"Decision {step.get('decision_id')} risk {step.get('risk')} blocks live execution."
+                )
+
+            if not step.get("ready_for_live_execution"):
+                errors.append(
+                    f"Decision {step.get('decision_id')} is not ready for live execution."
+                )
+
+        if step.get("metadata", {}).get("supported") is False:
+            warnings.append(
+                f"Decision {step.get('decision_id')} action {step.get('action')} is not supported yet."
             )
 
-        priority = str(decision.get("priority") or "").upper()
-        if not dry_run and priority not in limits["allowed_live_priorities"]:
-            warnings.append(f"Decision {decision.get('id')} has non-standard live priority: {priority}.")
-
     return {
-        "ok": not errors,
+        "ok": len(errors) == 0,
         "errors": errors,
         "warnings": warnings,
         "limits": limits,
