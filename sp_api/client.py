@@ -1,19 +1,29 @@
-"""Minimal Amazon SP-API client for Business OS.
+"""Amazon SP-API client for Business OS.
 
-This module intentionally focuses on the Reports API first because Revenue
-Intelligence needs GET_SALES_AND_TRAFFIC_REPORT before Listing, Finance, and
-Growth Intelligence can become truly business-aware.
+v8.8.1 upgrades the v8.8 scaffold from configuration-only checks to a live
+connection layer:
+
+- Refreshes Login with Amazon (LWA) access tokens from the seller refresh token.
+- Detects AWS SigV4 credentials required by SP-API data-plane endpoints.
+- Signs SP-API requests with AWS Signature Version 4 when credentials exist.
+- Exposes safe diagnostics and auth tests that never return secrets.
+
+The first production path remains Reports API / GET_SALES_AND_TRAFFIC_REPORT,
+which powers Revenue Intelligence and organic-vs-paid analysis.
 """
 
 from __future__ import annotations
 
 import gzip
+import hashlib
+import hmac
 import json
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -24,9 +34,18 @@ class SPAPIConfig:
     refresh_token: str | None
     region: str
     marketplace_id: str | None
+    aws_access_key_id: str | None = None
+    aws_secret_access_key: str | None = None
+    aws_session_token: str | None = None
 
     @staticmethod
     def from_env(marketplace: str | None = None) -> "SPAPIConfig":
+        """Resolve SP-API config from environment.
+
+        Supports both the explicit SP_API_* naming convention and the older
+        Amazon Ads/LWA names already present in this project so Render does not
+        require duplicated secrets.
+        """
         region = os.getenv("SP_API_REGION", "NA").upper()
         marketplace_id = None
         normalized = str(marketplace or "").upper()
@@ -36,12 +55,16 @@ class SPAPIConfig:
             marketplace_id = os.getenv("SP_API_MARKETPLACE_ID_CA", "A2EUQ1WTGCTBG2")
         else:
             marketplace_id = os.getenv("SP_API_MARKETPLACE_ID")
+
         return SPAPIConfig(
-            client_id=os.getenv("SP_API_CLIENT_ID"),
-            client_secret=os.getenv("SP_API_CLIENT_SECRET"),
-            refresh_token=os.getenv("SP_API_REFRESH_TOKEN"),
+            client_id=os.getenv("SP_API_CLIENT_ID") or os.getenv("AMAZON_CLIENT_ID"),
+            client_secret=os.getenv("SP_API_CLIENT_SECRET") or os.getenv("AMAZON_CLIENT_SECRET"),
+            refresh_token=os.getenv("SP_API_REFRESH_TOKEN") or os.getenv("SPAPI_REFRESH_TOKEN") or os.getenv("AMAZON_REFRESH_TOKEN"),
             region=region,
             marketplace_id=marketplace_id,
+            aws_access_key_id=os.getenv("SP_API_AWS_ACCESS_KEY_ID") or os.getenv("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.getenv("SP_API_AWS_SECRET_ACCESS_KEY") or os.getenv("AWS_SECRET_ACCESS_KEY"),
+            aws_session_token=os.getenv("SP_API_AWS_SESSION_TOKEN") or os.getenv("AWS_SESSION_TOKEN"),
         )
 
     @property
@@ -52,29 +75,41 @@ class SPAPIConfig:
             "FE": "https://sellingpartnerapi-fe.amazon.com",
         }.get(self.region, "https://sellingpartnerapi-na.amazon.com")
 
+    @property
+    def aws_region(self) -> str:
+        return {
+            "NA": "us-east-1",
+            "EU": "eu-west-1",
+            "FE": "us-west-2",
+        }.get(self.region, "us-east-1")
+
     def is_configured(self) -> bool:
         return bool(self.client_id and self.client_secret and self.refresh_token)
+
+    def has_sigv4_credentials(self) -> bool:
+        return bool(self.aws_access_key_id and self.aws_secret_access_key)
 
     def to_safe_dict(self) -> dict[str, Any]:
         return {
             "region": self.region,
+            "aws_region": self.aws_region,
             "endpoint": self.endpoint,
             "marketplace_id": self.marketplace_id,
             "has_client_id": bool(self.client_id),
             "has_client_secret": bool(self.client_secret),
             "has_refresh_token": bool(self.refresh_token),
+            "has_aws_access_key_id": bool(self.aws_access_key_id),
+            "has_aws_secret_access_key": bool(self.aws_secret_access_key),
+            "has_aws_session_token": bool(self.aws_session_token),
             "configured": self.is_configured(),
+            "sigv4_configured": self.has_sigv4_credentials(),
         }
 
 
 class SPAPIClient:
-    """Small Reports API client using LWA refresh token auth.
+    """SP-API client for safe Swagger-driven integration testing."""
 
-    This deliberately avoids adding new dependencies. It supports the first
-    Revenue Intelligence path: request report, check report, fetch document,
-    download/decode JSON. AWS SigV4 signing may be required depending on app
-    configuration; when that is missing the client returns actionable errors.
-    """
+    version = "8.8.1"
 
     def __init__(self, config: SPAPIConfig | None = None):
         self.config = config or SPAPIConfig.from_env()
@@ -82,21 +117,66 @@ class SPAPIClient:
         self._access_token_expires_at: datetime | None = None
 
     def diagnostics(self) -> dict[str, Any]:
+        status = "OK" if self.config.is_configured() else "AWAITING_CONFIGURATION"
+        if self.config.is_configured() and not self.config.has_sigv4_credentials():
+            status = "AWAITING_SIGV4_CONFIGURATION"
         return {
-            "status": "OK" if self.config.is_configured() else "AWAITING_CONFIGURATION",
-            "version": "8.8",
+            "status": status,
+            "version": self.version,
             "config": self.config.to_safe_dict(),
             "required_env": [
-                "SP_API_CLIENT_ID",
-                "SP_API_CLIENT_SECRET",
-                "SP_API_REFRESH_TOKEN",
+                "SP_API_CLIENT_ID or AMAZON_CLIENT_ID",
+                "SP_API_CLIENT_SECRET or AMAZON_CLIENT_SECRET",
+                "SP_API_REFRESH_TOKEN or SPAPI_REFRESH_TOKEN or AMAZON_REFRESH_TOKEN",
                 "SP_API_REGION",
                 "SP_API_MARKETPLACE_ID_US",
                 "SP_API_MARKETPLACE_ID_CA",
             ],
+            "sigv4_env": [
+                "SP_API_AWS_ACCESS_KEY_ID or AWS_ACCESS_KEY_ID",
+                "SP_API_AWS_SECRET_ACCESS_KEY or AWS_SECRET_ACCESS_KEY",
+                "SP_API_AWS_SESSION_TOKEN or AWS_SESSION_TOKEN (optional)",
+            ],
             "first_report_type": "GET_SALES_AND_TRAFFIC_REPORT",
-            "note": "If Amazon returns an authorization/signature error, configure the SP-API IAM/SigV4 credentials next. This release prepares the Business OS workflow and safe Swagger actions.",
+            "capabilities": [
+                "lwa_access_token_test",
+                "sigv4_configuration_check",
+                "marketplace_participations_test",
+                "sales_and_traffic_report_request",
+                "report_status",
+                "report_document_download",
+            ],
         }
+
+    def auth_test(self, include_sp_api_call: bool = False) -> dict[str, Any]:
+        """Test LWA token exchange, optionally followed by a signed SP-API call."""
+        token, error = self._access_token_or_error()
+        if error:
+            return {
+                "status": "ERROR",
+                "version": self.version,
+                "stage": "lwa_token_exchange",
+                "config": self.config.to_safe_dict(),
+                "error": error,
+            }
+        result: dict[str, Any] = {
+            "status": "OK",
+            "version": self.version,
+            "lwa": {
+                "access_token_obtained": bool(token),
+                "expires_at": self._access_token_expires_at.isoformat() if self._access_token_expires_at else None,
+            },
+            "sigv4": {
+                "configured": self.config.has_sigv4_credentials(),
+                "aws_region": self.config.aws_region,
+            },
+        }
+        if include_sp_api_call:
+            result["marketplace_participations"] = self.get_marketplace_participations()
+        return result
+
+    def get_marketplace_participations(self) -> dict[str, Any]:
+        return self._request("GET", "/sellers/v1/marketplaceParticipations")
 
     def request_sales_and_traffic_report(
         self,
@@ -176,45 +256,114 @@ class SPAPIClient:
         try:
             with urlopen(request, timeout=30) as response:
                 data = json.loads(response.read().decode("utf-8"))
-            return {"status": "OK", **data}
+            safe = {k: v for k, v in data.items() if k != "access_token"}
+            safe["access_token"] = data.get("access_token")
+            return {"status": "OK", **safe}
         except HTTPError as exc:
-            try:
-                detail = exc.read().decode("utf-8")
-            except Exception:
-                detail = str(exc)
-            return {"status": "ERROR", "http_status": exc.code, "message": detail}
+            return {"status": "ERROR", "http_status": exc.code, "message": self._read_http_error(exc)}
         except URLError as exc:
             return {"status": "ERROR", "message": str(exc)}
 
-    def _request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _request(self, method: str, path: str, body: dict[str, Any] | None = None, query: dict[str, Any] | None = None) -> dict[str, Any]:
         token, error = self._access_token_or_error()
         if error:
             return error
-        data = json.dumps(body).encode("utf-8") if body is not None else None
-        request = Request(
-            f"{self.config.endpoint}{path}",
-            data=data,
-            method=method,
-            headers={
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                "x-amz-access-token": token or "",
-            },
-        )
+        if not self.config.has_sigv4_credentials():
+            return {
+                "status": "AWAITING_SIGV4_CONFIGURATION",
+                "message": "LWA token succeeded, but SP-API endpoint calls require AWS SigV4 credentials.",
+                "required_env": [
+                    "SP_API_AWS_ACCESS_KEY_ID or AWS_ACCESS_KEY_ID",
+                    "SP_API_AWS_SECRET_ACCESS_KEY or AWS_SECRET_ACCESS_KEY",
+                    "SP_API_AWS_SESSION_TOKEN or AWS_SESSION_TOKEN (optional)",
+                ],
+                "config": self.config.to_safe_dict(),
+            }
+        body_bytes = json.dumps(body).encode("utf-8") if body is not None else b""
+        qs = f"?{urlencode(query or {}, doseq=True)}" if query else ""
+        url = f"{self.config.endpoint}{path}{qs}"
+        headers = self._signed_headers(method=method, url=url, body=body_bytes, access_token=token or "")
+        data = body_bytes if body is not None else None
+        request = Request(url, data=data, method=method, headers=headers)
         try:
             with urlopen(request, timeout=60) as response:
                 text = response.read().decode("utf-8")
             return {"status": "OK", "response": json.loads(text) if text else {}}
         except HTTPError as exc:
-            try:
-                detail = exc.read().decode("utf-8")
-            except Exception:
-                detail = str(exc)
             return {
                 "status": "ERROR",
                 "http_status": exc.code,
-                "message": detail,
-                "hint": "If this is an authorization/signature error, add SP-API AWS IAM/SigV4 credentials in the next connector hardening step.",
+                "message": self._read_http_error(exc),
+                "hint": "Verify SP-API roles, marketplace authorization, and IAM/SigV4 credentials.",
             }
         except Exception as exc:
             return {"status": "ERROR", "message": str(exc)}
+
+    def _signed_headers(self, method: str, url: str, body: bytes, access_token: str) -> dict[str, str]:
+        parsed = urlparse(url)
+        host = parsed.netloc
+        canonical_uri = parsed.path or "/"
+        canonical_query = parsed.query
+        now = datetime.utcnow()
+        amz_date = now.strftime("%Y%m%dT%H%M%SZ")
+        date_stamp = now.strftime("%Y%m%d")
+        payload_hash = hashlib.sha256(body or b"").hexdigest()
+
+        headers = {
+            "content-type": "application/json",
+            "host": host,
+            "x-amz-access-token": access_token,
+            "x-amz-date": amz_date,
+        }
+        if self.config.aws_session_token:
+            headers["x-amz-security-token"] = self.config.aws_session_token
+
+        signed_header_names = sorted(headers.keys())
+        canonical_headers = "".join(f"{name}:{headers[name].strip()}\n" for name in signed_header_names)
+        signed_headers = ";".join(signed_header_names)
+        canonical_request = "\n".join([
+            method.upper(),
+            canonical_uri,
+            canonical_query,
+            canonical_headers,
+            signed_headers,
+            payload_hash,
+        ])
+        credential_scope = f"{date_stamp}/{self.config.aws_region}/execute-api/aws4_request"
+        string_to_sign = "\n".join([
+            "AWS4-HMAC-SHA256",
+            amz_date,
+            credential_scope,
+            hashlib.sha256(canonical_request.encode("utf-8")).hexdigest(),
+        ])
+        signing_key = self._signature_key(self.config.aws_secret_access_key or "", date_stamp, self.config.aws_region, "execute-api")
+        signature = hmac.new(signing_key, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+        authorization = (
+            "AWS4-HMAC-SHA256 "
+            f"Credential={self.config.aws_access_key_id}/{credential_scope}, "
+            f"SignedHeaders={signed_headers}, "
+            f"Signature={signature}"
+        )
+        return {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Host": host,
+            "X-Amz-Access-Token": access_token,
+            "X-Amz-Date": amz_date,
+            "Authorization": authorization,
+            **({"X-Amz-Security-Token": self.config.aws_session_token} if self.config.aws_session_token else {}),
+        }
+
+    @staticmethod
+    def _signature_key(secret_key: str, date_stamp: str, region_name: str, service_name: str) -> bytes:
+        k_date = hmac.new(("AWS4" + secret_key).encode("utf-8"), date_stamp.encode("utf-8"), hashlib.sha256).digest()
+        k_region = hmac.new(k_date, region_name.encode("utf-8"), hashlib.sha256).digest()
+        k_service = hmac.new(k_region, service_name.encode("utf-8"), hashlib.sha256).digest()
+        return hmac.new(k_service, b"aws4_request", hashlib.sha256).digest()
+
+    @staticmethod
+    def _read_http_error(exc: HTTPError) -> str:
+        try:
+            return exc.read().decode("utf-8")
+        except Exception:
+            return str(exc)

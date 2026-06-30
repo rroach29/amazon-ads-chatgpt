@@ -1,4 +1,4 @@
-"""Business OS v8.8 — SP-API routes."""
+"""Business OS v8.8.1 — SP-API live connection routes."""
 
 from __future__ import annotations
 
@@ -12,14 +12,38 @@ from sp_api import SPAPIClient, SPAPIConfig, SalesTrafficIngestionService
 router = APIRouter()
 
 
+def _client(marketplace: str | None = None) -> SPAPIClient:
+    return SPAPIClient(SPAPIConfig.from_env(marketplace))
+
+
 @router.get("/sp-api/status")
 def business_os_sp_api_status(
     marketplace: str | None = None,
     x_api_key: str = Header(...),
 ):
     verify_key(x_api_key)
-    client = SPAPIClient(SPAPIConfig.from_env(marketplace))
-    return client.diagnostics()
+    return _client(marketplace).diagnostics()
+
+
+@router.get("/sp-api/auth-test")
+def business_os_sp_api_auth_test(
+    marketplace: str | None = None,
+    include_sp_api_call: bool = False,
+    x_api_key: str = Header(...),
+):
+    """Verify LWA token exchange and optionally run a signed SP-API test call."""
+    verify_key(x_api_key)
+    return _client(marketplace).auth_test(include_sp_api_call=include_sp_api_call)
+
+
+@router.get("/sp-api/marketplaces")
+def business_os_sp_api_marketplaces(
+    marketplace: str | None = None,
+    x_api_key: str = Header(...),
+):
+    """Call SP-API Sellers API to verify SigV4 + seller authorization."""
+    verify_key(x_api_key)
+    return _client(marketplace).get_marketplace_participations()
 
 
 @router.post("/sp-api/reports/sales-traffic/request")
@@ -33,7 +57,7 @@ def business_os_sp_api_request_sales_traffic_report(
     x_api_key: str = Header(...),
 ):
     verify_key(x_api_key)
-    client = SPAPIClient(SPAPIConfig.from_env(marketplace))
+    client = _client(marketplace)
     return client.request_sales_and_traffic_report(
         start_date=start_date,
         end_date=end_date,
@@ -50,8 +74,7 @@ def business_os_sp_api_report_status(
     x_api_key: str = Header(...),
 ):
     verify_key(x_api_key)
-    client = SPAPIClient(SPAPIConfig.from_env(marketplace))
-    return client.get_report(report_id)
+    return _client(marketplace).get_report(report_id)
 
 
 @router.post("/sp-api/reports/{report_id}/collect")
@@ -64,7 +87,7 @@ def business_os_sp_api_collect_report(
     x_api_key: str = Header(...),
 ):
     verify_key(x_api_key)
-    client = SPAPIClient(SPAPIConfig.from_env(marketplace))
+    client = _client(marketplace)
     report = client.get_report(report_id)
     if report.get("status") != "OK":
         return report
@@ -91,6 +114,41 @@ def business_os_sp_api_collect_report(
     )
 
 
+@router.post("/sp-api/reports/sales-traffic/run")
+def business_os_sp_api_run_sales_traffic_report(
+    start_date: str,
+    end_date: str,
+    marketplace: str | None = None,
+    marketplace_id: str | None = None,
+    asin_granularity: str = "CHILD",
+    date_granularity: str = "DAY",
+    x_api_key: str = Header(...),
+):
+    """Request a Sales & Traffic report and return the report ID when created.
+
+    Amazon generates reports asynchronously. After this returns a reportId, use
+    GET /business-os/sp-api/reports/{report_id}/status until DONE, then collect.
+    """
+    verify_key(x_api_key)
+    client = _client(marketplace)
+    requested = client.request_sales_and_traffic_report(
+        start_date=start_date,
+        end_date=end_date,
+        marketplace_id=marketplace_id,
+        asin_granularity=asin_granularity,
+        date_granularity=date_granularity,
+    )
+    if requested.get("status") != "OK":
+        return requested
+    response = requested.get("response", {})
+    return {
+        "status": "REQUESTED",
+        "report_id": response.get("reportId"),
+        "response": response,
+        "next_step": "Poll GET /business-os/sp-api/reports/{report_id}/status until processingStatus is DONE, then POST collect.",
+    }
+
+
 @router.post("/sp-api/sales-traffic/ingest")
 def business_os_sp_api_ingest_sales_traffic_payload(
     payload: dict[str, Any] | list[Any],
@@ -101,11 +159,7 @@ def business_os_sp_api_ingest_sales_traffic_payload(
     profile_id: str | None = None,
     x_api_key: str = Header(...),
 ):
-    """Manual fallback ingestion endpoint.
-
-    Useful before live SP-API credentials are fully approved: paste a Sales &
-    Traffic JSON payload into Swagger and populate Revenue/Product Intelligence.
-    """
+    """Manual fallback ingestion endpoint for Sales & Traffic JSON payloads."""
     verify_key(x_api_key)
     return SalesTrafficIngestionService.ingest_payload(
         payload,
