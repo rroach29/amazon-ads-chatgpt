@@ -1,5 +1,6 @@
 from database import SessionLocal
 from models import CampaignDailyDetail
+from business_data_context import resolve_data_context, apply_date_context, apply_marketplace_context
 from ai.decisions.shared import (
     make_decision,
     safe_float,
@@ -10,7 +11,7 @@ from ai.decisions.shared import (
 
 
 INCREASE_BUDGET_MIN_SPEND = 10
-INCREASE_BUDGET_MIN_ORDERS = 2
+INCREASE_BUDGET_MIN_ORDERS = 1
 INCREASE_BUDGET_MAX_ACOS = 0.30
 INCREASE_BUDGET_MIN_ROAS = 3
 
@@ -20,9 +21,9 @@ def calculate_increase_budget_confidence(spend, sales, orders, acos, roas):
 
     if spend >= 10:
         confidence += 5
+    if orders >= 1:
+        confidence += 5
     if orders >= 2:
-        confidence += 10
-    if orders >= 4:
         confidence += 5
     if acos <= 0.30:
         confidence += 10
@@ -46,11 +47,17 @@ def suggested_budget_increase_percent(acos):
     return 25
 
 
-def get_increase_budget_decisions(limit=20):
+def get_increase_budget_decisions(limit=20, data_context=None, country_code=None, profile_id=None):
     db = SessionLocal()
 
     try:
-        rows = (
+        context = data_context or resolve_data_context(
+            window="latest",
+            country_code=country_code,
+            profile_id=profile_id,
+        )
+
+        query = (
             db.query(CampaignDailyDetail)
             .filter(CampaignDailyDetail.channel == "amazon_ads")
             .filter(CampaignDailyDetail.profile_id.isnot(None))
@@ -58,6 +65,13 @@ def get_increase_budget_decisions(limit=20):
             .filter(CampaignDailyDetail.spend >= INCREASE_BUDGET_MIN_SPEND)
             .filter(CampaignDailyDetail.orders >= INCREASE_BUDGET_MIN_ORDERS)
             .filter(CampaignDailyDetail.sales > 0)
+        )
+
+        query = apply_date_context(query, CampaignDailyDetail, context)
+        query = apply_marketplace_context(query, CampaignDailyDetail, context)
+
+        rows = (
+            query
             .order_by(CampaignDailyDetail.sales.desc())
             .limit(limit)
             .all()
@@ -105,6 +119,7 @@ def get_increase_budget_decisions(limit=20):
                     risk=risk,
                     estimated_monthly_impact=estimated_impact,
                     reasoning=[
+                        f"Data window: {context.get('start_date')} to {context.get('end_date')}.",
                         f"Campaign {row.campaign_name} is performing efficiently.",
                         f"Spend was ${spend:.2f}.",
                         f"Sales were ${sales:.2f}.",
@@ -125,6 +140,7 @@ def get_increase_budget_decisions(limit=20):
                         "country_code": row.country_code,
                         "marketplace": row.marketplace,
                         "currency": row.currency,
+                        "data_window": context,
                         "suggested_budget_increase_percent": increase_percent,
                         "increase_percent": increase_percent,
                         "spend": spend,
@@ -140,6 +156,7 @@ def get_increase_budget_decisions(limit=20):
         return {
             "status": "OK",
             "decision_type": "INCREASE_BUDGET",
+            "data_context": context,
             "count": len(decisions),
             "decisions": sort_decisions(decisions),
         }

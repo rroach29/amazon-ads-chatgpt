@@ -1,5 +1,6 @@
 from database import SessionLocal
 from models import SearchTermDailyDetail
+from business_data_context import resolve_data_context, apply_date_context, apply_marketplace_context
 from ai.decisions.shared import (
     make_decision,
     safe_float,
@@ -9,8 +10,8 @@ from ai.decisions.shared import (
 )
 
 
-REDUCE_BID_MIN_SPEND = 10
-REDUCE_BID_MIN_CLICKS = 10
+REDUCE_BID_MIN_SPEND = 3
+REDUCE_BID_MIN_CLICKS = 2
 REDUCE_BID_MIN_ORDERS = 1
 REDUCE_BID_MIN_ACOS = 0.40
 
@@ -18,13 +19,13 @@ REDUCE_BID_MIN_ACOS = 0.40
 def calculate_reduce_bid_confidence(clicks, orders, spend, sales, acos):
     confidence = 60
 
-    if clicks >= 10:
-        confidence += 10
-    if clicks >= 20:
+    if clicks >= 2:
+        confidence += 5
+    if clicks >= 5:
         confidence += 5
     if orders >= 1:
         confidence += 10
-    if spend >= 20:
+    if spend >= 10:
         confidence += 5
     if acos >= 0.40:
         confidence += 5
@@ -47,11 +48,17 @@ def suggested_bid_reduction_percent(acos):
     return 15
 
 
-def get_reduce_bid_decisions(limit=25):
+def get_reduce_bid_decisions(limit=25, data_context=None, country_code=None, profile_id=None):
     db = SessionLocal()
 
     try:
-        rows = (
+        context = data_context or resolve_data_context(
+            window="latest",
+            country_code=country_code,
+            profile_id=profile_id,
+        )
+
+        query = (
             db.query(SearchTermDailyDetail)
             .filter(SearchTermDailyDetail.channel == "amazon_ads")
             .filter(SearchTermDailyDetail.profile_id.isnot(None))
@@ -61,6 +68,13 @@ def get_reduce_bid_decisions(limit=25):
             .filter(SearchTermDailyDetail.clicks >= REDUCE_BID_MIN_CLICKS)
             .filter(SearchTermDailyDetail.orders >= REDUCE_BID_MIN_ORDERS)
             .filter(SearchTermDailyDetail.sales > 0)
+        )
+
+        query = apply_date_context(query, SearchTermDailyDetail, context)
+        query = apply_marketplace_context(query, SearchTermDailyDetail, context)
+
+        rows = (
+            query
             .order_by(SearchTermDailyDetail.acos.desc())
             .limit(limit)
             .all()
@@ -99,10 +113,7 @@ def get_reduce_bid_decisions(limit=25):
 
             risk = risk_from_confidence(confidence)
             priority = "HIGH" if acos >= 0.60 else "MEDIUM"
-            estimated_impact = round(
-                spend * (reduction_percent / 100) * 30,
-                2,
-            )
+            estimated_impact = round(spend * (reduction_percent / 100) * 30, 2)
 
             decisions.append(
                 make_decision(
@@ -112,6 +123,7 @@ def get_reduce_bid_decisions(limit=25):
                     risk=risk,
                     estimated_monthly_impact=estimated_impact,
                     reasoning=[
+                        f"Data window: {context.get('start_date')} to {context.get('end_date')}.",
                         f'Search term "{search_term}" generated sales but is inefficient.',
                         f"Spend was ${spend:.2f}.",
                         f"Sales were ${sales:.2f}.",
@@ -136,6 +148,7 @@ def get_reduce_bid_decisions(limit=25):
                         "country_code": row.country_code,
                         "marketplace": row.marketplace,
                         "currency": row.currency,
+                        "data_window": context,
                         "search_term": search_term,
                         "suggested_bid_reduction_percent": reduction_percent,
                         "reduction_percent": reduction_percent,
@@ -152,6 +165,7 @@ def get_reduce_bid_decisions(limit=25):
         return {
             "status": "OK",
             "decision_type": "REDUCE_BID",
+            "data_context": context,
             "count": len(decisions),
             "decisions": sort_decisions(decisions),
         }
