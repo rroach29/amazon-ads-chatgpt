@@ -1,8 +1,9 @@
 """
-Business OS v3.8.0
+Business OS v6.4
 Execution Registry
 
-Adds live support for REDUCE_BID.
+Adds live/dry-run registry support for INCREASE_BID while preserving existing
+campaign, budget, and reduce-bid actions.
 """
 
 from amazon_execution import execute_amazon_action
@@ -64,7 +65,6 @@ ACTION_REGISTRY = {
         "requires_keyword_id": True,
         "rollback_action": None,
     },
-
     "INCREASE_BID": {
         "action": "INCREASE_BID",
         "supported": True,
@@ -84,7 +84,7 @@ ACTION_REGISTRY = {
         "requires_campaign_identity": True,
         "requires_keyword_id": True,
         "rollback_action": None,
-        "reason": "Exact set-bid execution is planned after reduce-bid is verified.",
+        "reason": "Exact set-bid execution is planned after bid-change automation is verified.",
     },
     "ADD_NEGATIVE_KEYWORD": {
         "action": "ADD_NEGATIVE_KEYWORD",
@@ -105,6 +105,26 @@ ACTION_REGISTRY = {
         "requires_campaign_identity": True,
         "rollback_action": None,
         "reason": "Keyword harvesting execution is planned for a later release.",
+    },
+    "INCREASE_PLACEMENT_MODIFIER": {
+        "action": "INCREASE_PLACEMENT_MODIFIER",
+        "supported": False,
+        "live_supported": False,
+        "platform": "amazon_ads",
+        "resource_type": "placement",
+        "requires_campaign_identity": True,
+        "rollback_action": None,
+        "reason": "Placement modifier detection is scaffolded; live execution waits for placement report storage.",
+    },
+    "REDUCE_PLACEMENT_MODIFIER": {
+        "action": "REDUCE_PLACEMENT_MODIFIER",
+        "supported": False,
+        "live_supported": False,
+        "platform": "amazon_ads",
+        "resource_type": "placement",
+        "requires_campaign_identity": True,
+        "rollback_action": None,
+        "reason": "Placement modifier detection is scaffolded; live execution waits for placement report storage.",
     },
 }
 

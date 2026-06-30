@@ -1,8 +1,6 @@
 """
-Business OS v6.2
+Business OS v6.4
 Shared Intelligence Services
-
-Reusable services for optimizers and future business agents.
 """
 
 from .impact_estimator import ImpactEstimator
@@ -10,6 +8,7 @@ from .risk_engine import RiskEngine
 from .evidence_engine import EvidenceEngine
 from .scoring_engine import ScoringEngine
 from .decision_factory import DecisionFactory
+from .bid_policy import BidPolicy
 
 __all__ = [
     "ImpactEstimator",
@@ -17,4 +16,5 @@ __all__ = [
     "EvidenceEngine",
     "ScoringEngine",
     "DecisionFactory",
+    "BidPolicy",
 ]
