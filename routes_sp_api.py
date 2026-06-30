@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Header
 
 from auth import verify_key
-from sp_api import SPAPIClient, SPAPIConfig, SalesTrafficIngestionService, SPAPIReportPipelineService
+from sp_api import SPAPIClient, SPAPIConfig, SalesTrafficIngestionService, SPAPIReportPipelineService, SellerCentralAutomationService
 
 router = APIRouter()
 
@@ -262,4 +262,51 @@ def business_os_sp_api_ingest_sales_traffic_payload(
         marketplace_id=marketplace_id,
         currency=currency,
         profile_id=profile_id,
+    )
+
+# v9.0 Seller Central automation endpoints.
+@router.get("/sp-api/automation/diagnostics")
+def business_os_sp_api_automation_diagnostics(x_api_key: str = Header(...)):
+    verify_key(x_api_key)
+    return SellerCentralAutomationService.diagnostics()
+
+
+@router.post("/sp-api/automation/yesterday/request")
+def business_os_sp_api_automation_request_yesterday(
+    marketplaces: str | None = None,
+    date: str | None = None,
+    asin_granularity: str = "CHILD",
+    date_granularity: str = "DAY",
+    x_api_key: str = Header(...),
+):
+    verify_key(x_api_key)
+    return SellerCentralAutomationService.request_yesterday(
+        marketplaces=marketplaces,
+        date=date,
+        asin_granularity=asin_granularity,
+        date_granularity=date_granularity,
+    )
+
+
+@router.post("/sp-api/automation/open-jobs/collect")
+def business_os_sp_api_automation_collect_open_jobs(
+    limit: int = 25,
+    x_api_key: str = Header(...),
+):
+    verify_key(x_api_key)
+    return SellerCentralAutomationService.collect_open_jobs(limit=limit)
+
+
+@router.post("/sp-api/automation/nightly/run")
+def business_os_sp_api_automation_nightly_run(
+    marketplaces: str | None = None,
+    date: str | None = None,
+    collect_existing_first: bool = True,
+    x_api_key: str = Header(...),
+):
+    verify_key(x_api_key)
+    return SellerCentralAutomationService.nightly_run(
+        marketplaces=marketplaces,
+        date=date,
+        collect_existing_first=collect_existing_first,
     )
