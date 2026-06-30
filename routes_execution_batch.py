@@ -27,8 +27,28 @@ class ExecutionBatchRequest(BaseModel):
 @router.get("/execution-actions")
 def execution_actions(x_api_key: str = Header(...)):
     verify_key(x_api_key)
-    return list_actions()
-
+    return {
+        "status": "OK",
+        "actions": [
+            "PAUSE_CAMPAIGN",
+            "RESUME_CAMPAIGN",
+            "SET_BUDGET",
+            "INCREASE_BUDGET",
+            "DECREASE_BUDGET",
+        ],
+        "live_supported": [
+            "PAUSE_CAMPAIGN",
+            "RESUME_CAMPAIGN",
+            "SET_BUDGET",
+            "INCREASE_BUDGET",
+            "DECREASE_BUDGET",
+        ],
+        "dry_run_default": True,
+        "live_requires": {
+            "dry_run": False,
+            "confirm_live": True,
+        },
+    }
 
 @router.get("/execution-limits")
 def execution_limits(x_api_key: str = Header(...)):
