@@ -1,16 +1,26 @@
 """
-Business OS v5.0.4
-Business Plan Engine — Risk Alignment
+Business OS v5.0.5
+Business Plan Engine — Risk Backfill
 
-Updates:
-- Uses payload.risk_assessment.overall_risk when present.
-- Negative keyword decisions now flow into plans when their assessed risk is LOW.
+Fix:
+Existing OPEN decisions created before v5.0.4 may not have
+payload.risk_assessment. The planner now computes a fallback risk assessment
+at plan time using decision_risk_engine.
+
+Result:
+Existing ADD_NEGATIVE_KEYWORD decisions can enter the plan as LOW risk without
+needing to delete/recreate decision history rows.
 """
 
 from datetime import datetime
 
 from business_data_context import resolve_data_context
 from decision_history import get_decision_history
+
+try:
+    from decision_risk_engine import assess_decision_risk
+except Exception:
+    assess_decision_risk = None
 
 
 ACTION_WEIGHTS = {
@@ -33,11 +43,33 @@ def _safe_float(value, default=0):
         return default
 
 
-def _effective_risk(action):
-    payload = action.get("payload") if isinstance(action.get("payload"), dict) else {}
-    assessment = payload.get("risk_assessment") if isinstance(payload.get("risk_assessment"), dict) else {}
+def _payload(action):
+    return action.get("payload") if isinstance(action.get("payload"), dict) else {}
 
-    return assessment.get("overall_risk") or action.get("risk")
+
+def _risk_assessment(action):
+    payload = _payload(action)
+    assessment = payload.get("risk_assessment")
+
+    if isinstance(assessment, dict) and assessment.get("overall_risk"):
+        return assessment
+
+    if assess_decision_risk:
+        return assess_decision_risk(
+            decision=action.get("decision"),
+            confidence=action.get("confidence"),
+            estimated_monthly_impact=action.get("estimated_monthly_impact"),
+            payload=payload,
+        )
+
+    return {
+        "overall_risk": action.get("risk") or "MEDIUM",
+        "factors": ["Fallback risk used because decision_risk_engine was unavailable."],
+    }
+
+
+def _effective_risk(action):
+    return _risk_assessment(action).get("overall_risk") or action.get("risk") or "MEDIUM"
 
 
 def _risk_score(risk):
@@ -92,8 +124,9 @@ def _weighted_confidence(actions):
 
 
 def _action_payload(action):
-    payload = action.get("payload") if isinstance(action.get("payload"), dict) else {}
-    effective_risk = _effective_risk(action)
+    payload = _payload(action)
+    assessment = _risk_assessment(action)
+    effective_risk = assessment.get("overall_risk") or action.get("risk")
 
     return {
         "decision_id": action.get("id"),
@@ -102,7 +135,7 @@ def _action_payload(action):
         "confidence": action.get("confidence"),
         "risk": effective_risk,
         "original_risk": action.get("risk"),
-        "risk_assessment": payload.get("risk_assessment"),
+        "risk_assessment": assessment,
         "recommended_action": action.get("recommended_action"),
         "estimated_monthly_impact": action.get("estimated_monthly_impact"),
         "campaign_id": payload.get("campaign_id"),
@@ -161,7 +194,7 @@ def _decision_exclusion_reasons(
     decision_type = action.get("decision")
     confidence = _safe_float(action.get("confidence"))
     risk = str(_effective_risk(action) or "").upper()
-    payload = action.get("payload") if isinstance(action.get("payload"), dict) else {}
+    payload = _payload(action)
 
     if decision_type not in allowed_actions:
         reasons.append(f"Unsupported plan action: {decision_type}")
@@ -218,6 +251,7 @@ def _filter_actions_with_explainability(
                 "confidence": raw_action.get("confidence"),
                 "risk": _effective_risk(raw_action),
                 "original_risk": raw_action.get("risk"),
+                "risk_assessment": _risk_assessment(raw_action),
                 "estimated_monthly_impact": raw_action.get("estimated_monthly_impact"),
                 "reasons": reasons,
                 "payload_summary": {
@@ -254,6 +288,7 @@ def _filter_actions_with_explainability(
             "confidence": action.get("confidence"),
             "risk": action.get("risk"),
             "original_risk": action.get("original_risk"),
+            "risk_assessment": action.get("risk_assessment"),
             "estimated_monthly_impact": action.get("estimated_monthly_impact"),
             "reasons": [f"Excluded because max_actions={max_actions} was reached."],
             "payload_summary": {
@@ -393,7 +428,7 @@ def build_business_plan(
             "decision_history_count": decision_response.get("count"),
             "decision_history_current_window_only": decision_response.get("current_window_only"),
             "data_context": data_context,
-            "risk_source": "payload.risk_assessment.overall_risk when present, otherwise decision.risk",
+            "risk_source": "payload.risk_assessment.overall_risk when present; otherwise computed by decision_risk_engine at plan time",
         },
         "constraints": {
             "min_confidence": min_confidence,
@@ -486,6 +521,7 @@ def get_plan_summary(plan):
                 "confidence": action.get("confidence"),
                 "risk": action.get("risk"),
                 "original_risk": action.get("original_risk"),
+                "risk_assessment": action.get("risk_assessment"),
                 "reasons": action.get("reasons"),
             }
             for action in plan.get("excluded_actions", [])[:10]
