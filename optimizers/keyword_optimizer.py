@@ -22,6 +22,11 @@ from optimizers.opportunity_queue import build_opportunity, sort_opportunities
 
 
 class KeywordOptimizer(BaseOptimizer):
+    version = "6.1.0"
+    capabilities = ["keyword_waste_detection", "negative_keyword_recommendations"]
+    supported_objectives = ["MAXIMIZE_PROFIT", "PRESERVE_CASH", "MAXIMIZE_REVENUE"]
+    risk_profile = "LOW"
+
     name = "keyword_optimizer"
     decision_types = ["ADD_NEGATIVE_KEYWORD"]
 
@@ -154,6 +159,12 @@ class KeywordOptimizer(BaseOptimizer):
                     recommended_action=opportunity["title"],
                     payload=payload,
                     evidence=payload.get("evidence"),
+                    optimizer_name=self.name,
+                    optimizer_version=self.version,
+                    optimizer_class=self.__class__.__name__,
+                    source_opportunity_id=opportunity.get("opportunity_id"),
+                    opportunity=opportunity,
+                    data_context=self.context,
                 )
             )
 

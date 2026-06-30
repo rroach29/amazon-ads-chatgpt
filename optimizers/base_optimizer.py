@@ -1,14 +1,15 @@
 """
-Business OS v6.1.0
+Business OS v8.3
 Base Optimizer
 
-Every optimizer follows the same lifecycle:
-collect -> detect -> estimate impact -> assess risk -> build decisions
+Every optimizer follows the same lifecycle and now publishes a manifest plus
+provenance metadata for all opportunities and decisions it emits.
 """
 
 from abc import ABC, abstractmethod
 from time import perf_counter
 
+from domain import OptimizerManifest
 from optimizers.domain_models import OptimizerRunMetrics
 
 
@@ -16,6 +17,9 @@ class BaseOptimizer(ABC):
     name = "base_optimizer"
     version = "6.1.0"
     decision_types = []
+    capabilities = []
+    supported_objectives = ["MAXIMIZE_PROFIT"]
+    risk_profile = "MEDIUM"
 
     def __init__(self, context=None):
         self.context = context or {}
@@ -24,29 +28,57 @@ class BaseOptimizer(ABC):
         self.decisions = []
         self.metrics = OptimizerRunMetrics(optimizer=self.name)
 
+    @classmethod
+    def manifest(cls):
+        return OptimizerManifest(
+            name=cls.name,
+            version=getattr(cls, "version", "unknown"),
+            optimizer_class=cls.__name__,
+            decision_types=list(getattr(cls, "decision_types", []) or []),
+            supported_objectives=list(getattr(cls, "supported_objectives", ["MAXIMIZE_PROFIT"]) or []),
+            capabilities=list(getattr(cls, "capabilities", []) or []),
+            risk_profile=getattr(cls, "risk_profile", "MEDIUM"),
+        ).to_dict()
+
+    def _attach_provenance_to_opportunities(self):
+        enriched = []
+        for opportunity in self.opportunities or []:
+            if not isinstance(opportunity, dict):
+                enriched.append(opportunity)
+                continue
+            opportunity.setdefault("optimizer_name", self.name)
+            opportunity.setdefault("optimizer", self.name)
+            opportunity.setdefault("optimizer_version", self.version)
+            opportunity.setdefault("optimizer_class", self.__class__.__name__)
+            opportunity.setdefault("business_objective", "MAXIMIZE_PROFIT")
+            payload = opportunity.get("payload") if isinstance(opportunity.get("payload"), dict) else {}
+            payload.setdefault("optimizer_name", self.name)
+            payload.setdefault("optimizer_version", self.version)
+            payload.setdefault("optimizer_class", self.__class__.__name__)
+            payload.setdefault("business_objective", opportunity.get("business_objective", "MAXIMIZE_PROFIT"))
+            payload.setdefault("source_opportunity_id", opportunity.get("opportunity_id"))
+            opportunity["payload"] = payload
+            enriched.append(opportunity)
+        self.opportunities = enriched
+
     @abstractmethod
     def collect(self):
-        """Load required data for this optimizer."""
         raise NotImplementedError
 
     @abstractmethod
     def detect(self):
-        """Find opportunities."""
         raise NotImplementedError
 
     @abstractmethod
     def estimate_impact(self):
-        """Attach estimated impact to opportunities."""
         raise NotImplementedError
 
     @abstractmethod
     def assess_risk(self):
-        """Attach structured risk to opportunities."""
         raise NotImplementedError
 
     @abstractmethod
     def build_decisions(self):
-        """Convert opportunities into standardized decision objects."""
         raise NotImplementedError
 
     def run(self):
@@ -55,6 +87,7 @@ class BaseOptimizer(ABC):
         try:
             self.collect()
             self.detect()
+            self._attach_provenance_to_opportunities()
             self.estimate_impact()
             self.assess_risk()
             self.build_decisions()
@@ -73,6 +106,7 @@ class BaseOptimizer(ABC):
             "status": self.metrics.status,
             "optimizer": self.name,
             "optimizer_version": self.version,
+            "optimizer_manifest": self.manifest(),
             "decision_types": self.decision_types,
             "context": self.context,
             "opportunity_count": len(self.opportunities),

@@ -7,7 +7,9 @@ from typing import Any
 from .models import (
     ActionGroup,
     Decision,
+    DecisionProvenance,
     Evidence,
+    OptimizerManifest,
     ImpactEstimate,
     Initiative,
     Objective,
@@ -23,6 +25,8 @@ MODELS = {
     "RiskAssessment": RiskAssessment,
     "Opportunity": Opportunity,
     "Decision": Decision,
+    "DecisionProvenance": DecisionProvenance,
+    "OptimizerManifest": OptimizerManifest,
     "Objective": Objective,
     "ActionGroup": ActionGroup,
     "Initiative": Initiative,
@@ -43,7 +47,7 @@ class DomainRegistry:
     def list_models() -> dict[str, Any]:
         return {
             "status": "OK",
-            "version": "8.2",
+            "version": "8.3",
             "model_count": len(MODELS),
             "models": sorted(MODELS.keys()),
             "narrative": "Typed domain contracts are available for optimizer, decision, planning, and learning layers.",
@@ -55,19 +59,19 @@ class DomainRegistry:
             model = MODELS.get(model_name)
             if not model:
                 return {"status": "NOT_FOUND", "model": model_name, "available": sorted(MODELS.keys())}
-            return {"status": "OK", "version": "8.2", "model": model_name, "schema": _schema(model)}
+            return {"status": "OK", "version": "8.3", "model": model_name, "schema": _schema(model)}
 
         return {
             "status": "OK",
-            "version": "8.2",
+            "version": "8.3",
             "schemas": {name: _schema(model) for name, model in MODELS.items()},
         }
 
     @staticmethod
     def sample() -> dict[str, Any]:
         opportunity = Opportunity(
-            optimizer_name="BidOptimizer",
-            optimizer_version="8.2",
+            optimizer_name="bid_optimizer",
+            optimizer_version="8.3",
             decision="INCREASE_BID",
             title="Increase bid on proven search term",
             reason="Search term shows profitable conversion history.",
@@ -88,13 +92,13 @@ class DomainRegistry:
             recommended_action="Increase bid by 15%",
             reasoning=["Search term has strong ROAS.", "Risk is controlled by moderate bid increase."],
             payload={"campaign_name": "PET PHOTO - EXACT"},
-            optimizer_name="BidOptimizer",
-            optimizer_version="8.2",
+            optimizer_name="bid_optimizer",
+            optimizer_version="8.3",
         )
         plan = Plan(title="Sample Executive Plan", estimated_monthly_impact=125.0, confidence=82.0)
         return {
             "status": "OK",
-            "version": "8.2",
+            "version": "8.3",
             "opportunity": opportunity.to_dict(),
             "decision": decision.to_dict(),
             "plan": plan.to_dict(),

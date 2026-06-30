@@ -1,5 +1,5 @@
 """
-Business OS v8.2 — Typed Domain Models
+Business OS v8.3 — Typed Domain Models + Decision Provenance
 
 Shared contracts for opportunities, decisions, initiatives, plans, objectives,
 evidence, risk, impact, and outcomes. These models are intentionally additive:
@@ -85,6 +85,43 @@ class ObjectiveType(str, Enum):
     BALANCED_GROWTH = "BALANCED_GROWTH"
 
 
+class ExecutionPhase(str, Enum):
+    PLAN = "PLAN"
+    REVIEW = "REVIEW"
+    APPROVE = "APPROVE"
+    EXECUTE = "EXECUTE"
+    MEASURE = "MEASURE"
+    LEARN = "LEARN"
+
+
+# Backward-readable alias for planning terminology.
+StrategicObjective = ObjectiveType
+
+
+class DecisionProvenance(DomainBaseModel):
+    optimizer_name: str = "unknown"
+    optimizer_version: Optional[str] = None
+    optimizer_class: Optional[str] = None
+    optimizer_capability: Optional[str] = None
+    business_os_version: str = "8.3"
+    decision_factory_version: str = "2.0"
+    generated_at: str = Field(default_factory=utc_now_iso)
+    data_context: JsonDict = Field(default_factory=dict)
+    business_objective: str = ObjectiveType.MAXIMIZE_PROFIT.value
+    source_opportunity_id: Optional[str] = None
+
+
+class OptimizerManifest(DomainBaseModel):
+    name: str
+    version: str = "unknown"
+    optimizer_class: str = "unknown"
+    decision_types: List[str] = Field(default_factory=list)
+    supported_objectives: List[str] = Field(default_factory=lambda: [ObjectiveType.MAXIMIZE_PROFIT.value])
+    capabilities: List[str] = Field(default_factory=list)
+    risk_profile: RiskLevel = RiskLevel.MEDIUM
+    schema_version: str = "8.3"
+
+
 class Evidence(DomainBaseModel):
     source: str = "unknown"
     metric: str = "unknown"
@@ -127,6 +164,8 @@ class Opportunity(DomainBaseModel):
     opportunity_id: str = Field(default_factory=lambda: str(uuid4()))
     optimizer_name: str = "unknown"
     optimizer_version: Optional[str] = None
+    optimizer_class: Optional[str] = None
+    business_objective: str = ObjectiveType.MAXIMIZE_PROFIT.value
     decision: str = DecisionType.UNKNOWN.value
     title: str = ""
     reason: str = ""
@@ -140,7 +179,7 @@ class Opportunity(DomainBaseModel):
     impact: Optional[ImpactEstimate] = None
     risk_assessment: Optional[RiskAssessment] = None
     created_at: str = Field(default_factory=utc_now_iso)
-    schema_version: str = "8.2"
+    schema_version: str = "8.3"
 
     @classmethod
     def from_legacy(cls, item: JsonDict) -> "Opportunity":
@@ -150,6 +189,8 @@ class Opportunity(DomainBaseModel):
             opportunity_id=str(item.get("opportunity_id") or item.get("id") or uuid4()),
             optimizer_name=str(item.get("optimizer_name") or item.get("optimizer") or item.get("source") or "unknown"),
             optimizer_version=item.get("optimizer_version"),
+            optimizer_class=item.get("optimizer_class") or payload.get("optimizer_class"),
+            business_objective=str(item.get("business_objective") or payload.get("business_objective") or ObjectiveType.MAXIMIZE_PROFIT.value),
             decision=str(item.get("decision") or DecisionType.UNKNOWN.value),
             title=str(item.get("title") or item.get("recommended_action") or ""),
             reason=str(item.get("reason") or ""),
@@ -181,9 +222,15 @@ class Decision(DomainBaseModel):
     lifecycle_state: LifecycleState = LifecycleState.NEW
     optimizer_name: str = "unknown"
     optimizer_version: Optional[str] = None
+    optimizer_class: Optional[str] = None
+    business_os_version: str = "8.3"
+    decision_factory_version: str = "2.0"
+    business_objective: str = ObjectiveType.MAXIMIZE_PROFIT.value
+    source_opportunity_id: Optional[str] = None
+    provenance: Optional[DecisionProvenance] = None
     source: str = "optimizer"
     created_at: str = Field(default_factory=utc_now_iso)
-    schema_version: str = "8.2"
+    schema_version: str = "8.3"
 
     @classmethod
     def from_legacy(cls, item: JsonDict) -> "Decision":
@@ -204,6 +251,12 @@ class Decision(DomainBaseModel):
             lifecycle_state=str(item.get("lifecycle_state") or "NEW").upper(),
             optimizer_name=str(item.get("optimizer_name") or item.get("optimizer") or payload.get("optimizer_name") or "unknown"),
             optimizer_version=item.get("optimizer_version") or payload.get("optimizer_version"),
+            optimizer_class=item.get("optimizer_class") or payload.get("optimizer_class"),
+            business_os_version=str(item.get("business_os_version") or payload.get("business_os_version") or "8.3"),
+            decision_factory_version=str(item.get("decision_factory_version") or payload.get("decision_factory_version") or "2.0"),
+            business_objective=str(item.get("business_objective") or payload.get("business_objective") or ObjectiveType.MAXIMIZE_PROFIT.value),
+            source_opportunity_id=item.get("source_opportunity_id") or payload.get("source_opportunity_id"),
+            provenance=DecisionProvenance(**item.get("provenance")) if isinstance(item.get("provenance"), dict) else None,
             source=str(item.get("source") or "optimizer"),
             created_at=str(item.get("created_at") or utc_now_iso()),
         )
@@ -227,6 +280,7 @@ class ActionGroup(DomainBaseModel):
     estimated_monthly_impact: float = 0.0
     confidence: float = 0.0
     risk: RiskLevel = RiskLevel.MEDIUM
+    execution_phase: ExecutionPhase = ExecutionPhase.PLAN
 
 
 class Initiative(DomainBaseModel):
@@ -250,7 +304,7 @@ class Plan(DomainBaseModel):
     confidence: float = 0.0
     risk: RiskLevel = RiskLevel.MEDIUM
     created_at: str = Field(default_factory=utc_now_iso)
-    schema_version: str = "8.2"
+    schema_version: str = "8.3"
 
 
 class Outcome(DomainBaseModel):

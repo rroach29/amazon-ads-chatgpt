@@ -1,10 +1,9 @@
 """
-Business OS v6.1.0
-Optimizer Registry
+Business OS v8.3
+Optimizer Registry with Manifests
 
 Mission Control and planners should not know individual optimizer internals.
-They ask the registry to run all registered optimizers and receive one ranked
-opportunity queue.
+They ask the registry for optimizer manifests and run outputs.
 """
 
 from business_data_context import resolve_data_context
@@ -21,18 +20,19 @@ REGISTERED_OPTIMIZERS = [
 ]
 
 
+def optimizer_manifests():
+    return [optimizer.manifest() for optimizer in REGISTERED_OPTIMIZERS]
+
+
 def list_optimizers():
+    manifests = optimizer_manifests()
     return {
         "status": "OK",
+        "schema_version": "8.3",
         "count": len(REGISTERED_OPTIMIZERS),
-        "optimizers": [
-            {
-                "name": optimizer.name,
-                "version": getattr(optimizer, "version", None),
-                "decision_types": optimizer.decision_types,
-            }
-            for optimizer in REGISTERED_OPTIMIZERS
-        ],
+        "optimizers": manifests,
+        "decision_types": sorted({dt for manifest in manifests for dt in manifest.get("decision_types", [])}),
+        "narrative": "Optimizers are registered through v8.3 manifests with provenance metadata.",
     }
 
 
@@ -66,8 +66,10 @@ def run_all_optimizers(window="latest", country_code=None, profile_id=None):
 
     return {
         "status": "OK",
+        "schema_version": "8.3",
         "context": context,
         "optimizer_count": len(results),
+        "optimizer_manifests": optimizer_manifests(),
         "optimizers": results,
         "opportunity_count": len(opportunities),
         "decision_count": len(decisions),

@@ -35,6 +35,11 @@ except Exception:  # pragma: no cover - keeps optimizer safe if v6.3 not install
 
 
 class BidOptimizer(BaseOptimizer):
+    version = "6.1.0"
+    capabilities = ["bid_scaling", "bid_reduction", "placement_modifier_scaffolding"]
+    supported_objectives = ["MAXIMIZE_PROFIT", "PRESERVE_CASH", "MAXIMIZE_REVENUE"]
+    risk_profile = "MEDIUM"
+
     name = "bid_optimizer"
     decision_types = [
         "REDUCE_BID",
@@ -294,6 +299,12 @@ class BidOptimizer(BaseOptimizer):
                     recommended_action=opportunity["title"],
                     payload=payload,
                     evidence=payload.get("evidence"),
+                    optimizer_name=self.name,
+                    optimizer_version=self.version,
+                    optimizer_class=self.__class__.__name__,
+                    source_opportunity_id=opportunity.get("opportunity_id"),
+                    opportunity=opportunity,
+                    data_context=self.context,
                 )
             )
 

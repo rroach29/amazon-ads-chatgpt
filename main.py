@@ -39,6 +39,8 @@ from routes_knowledge_graph import router as knowledge_graph_router
 from routes_budget_intelligence import router as budget_intelligence_router
 from routes_executive import router as executive_router
 from routes_domain import router as domain_router
+from routes_planning import router as planning_router
+from routes_provenance import router as provenance_router
 
 
 app = FastAPI(title="Business OS API")
@@ -80,6 +82,8 @@ app.include_router(knowledge_graph_router, prefix="/business-os", tags=["Busines
 app.include_router(budget_intelligence_router, prefix="/business-os", tags=["Business OS Budget Intelligence"])
 app.include_router(executive_router, prefix="/business-os", tags=["Business OS Executive AI"])
 app.include_router(domain_router, prefix="/business-os", tags=["Business OS Domain Models"])
+app.include_router(planning_router, prefix="/business-os", tags=["Business OS Planning Foundation"])
+app.include_router(provenance_router, prefix="/business-os", tags=["Business OS Decision Provenance"])
 
 
 @app.get("/")

@@ -35,6 +35,11 @@ except Exception:  # pragma: no cover
 
 
 class BudgetOptimizer(BaseOptimizer):
+    version = "7.1.0"
+    capabilities = ["budget_reallocation", "budget_reduction", "budget_scaling"]
+    supported_objectives = ["MAXIMIZE_PROFIT", "PRESERVE_CASH", "MAXIMIZE_REVENUE"]
+    risk_profile = "MEDIUM"
+
     name = "budget_optimizer"
     version = "7.1.0"
     decision_types = ["INCREASE_BUDGET", "DECREASE_BUDGET"]
@@ -280,6 +285,12 @@ class BudgetOptimizer(BaseOptimizer):
                     recommended_action=opportunity["title"],
                     payload=payload,
                     evidence=evidence,
+                    optimizer_name=self.name,
+                    optimizer_version=self.version,
+                    optimizer_class=self.__class__.__name__,
+                    source_opportunity_id=opportunity.get("opportunity_id"),
+                    opportunity=opportunity,
+                    data_context=self.context,
                 )
             )
 
