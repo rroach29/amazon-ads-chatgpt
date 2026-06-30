@@ -134,15 +134,23 @@ def create_report(report_type: str, profile_id=None, country_code=None):
     headers["Accept"] = "application/vnd.createasyncreportrequest.v3+json"
     headers["Content-Type"] = "application/vnd.createasyncreportrequest.v3+json"
 
+    # Business OS v3.8.2 fix:
+    # Dashboard, Morning Brief, and daily decisions should use ONE reporting day.
+    # Previously this used a 30-day range:
+    #     start_date = end_date - timedelta(days=29)
+    # with timeUnit=SUMMARY, which produced inflated "daily" dashboard totals.
+    #
+    # Amazon reporting can still expose sales7d attribution fields, but spend/clicks
+    # are now constrained to yesterday only.
     end_date = date.today() - timedelta(days=1)
-    start_date = end_date - timedelta(days=29)
-    timestamp = int(time.time())
+    start_date = end_date
 
+    timestamp = int(time.time())
     profile_label = profile.get("country_code") or profile.get("profile_id")
 
     if report_type == "campaigns":
         config = {
-            "name": f"SP Campaign Performance {profile_label} {timestamp}",
+            "name": f"SP Daily Campaign Performance {profile_label} {end_date.isoformat()} {timestamp}",
             "reportTypeId": "spCampaigns",
             "groupBy": ["campaign"],
             "columns": [
@@ -153,7 +161,7 @@ def create_report(report_type: str, profile_id=None, country_code=None):
         }
     elif report_type == "search_terms":
         config = {
-            "name": f"SP Search Term Performance {profile_label} {timestamp}",
+            "name": f"SP Daily Search Term Performance {profile_label} {end_date.isoformat()} {timestamp}",
             "reportTypeId": "spSearchTerm",
             "groupBy": ["searchTerm"],
             "columns": [
@@ -197,12 +205,22 @@ def create_report(report_type: str, profile_id=None, country_code=None):
                 "reportId": match.group(0),
                 "status": "DUPLICATE_REUSED",
                 "profile": profile,
+                "date_range": {
+                    "startDate": start_date.isoformat(),
+                    "endDate": end_date.isoformat(),
+                    "mode": "DAILY",
+                },
             }
 
         raise HTTPException(status_code=response.status_code, detail=response.text)
 
     data = response.json()
     data["profile"] = profile
+    data["date_range"] = {
+        "startDate": start_date.isoformat(),
+        "endDate": end_date.isoformat(),
+        "mode": "DAILY",
+    }
     return data
 
 
