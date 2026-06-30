@@ -1,31 +1,32 @@
 """
-Business OS v6.1.0
+Business OS v6.2
 Keyword Optimizer
 
-Detects wasted-spend search terms and emits typed, evidence-backed
-ADD_NEGATIVE_KEYWORD opportunities while preserving the existing dict API.
+Uses shared intelligence services for impact, risk, evidence, scoring, and
+standardized decision creation.
 """
 
 from database import SessionLocal
 from models import SearchTermDailyDetail
-from ai.decisions.shared import make_decision, safe_float, safe_int, sort_decisions
+from ai.decisions.shared import safe_float, safe_int, sort_decisions
 from business_data_context import apply_date_context, apply_marketplace_context
-from decision_risk_engine import assess_decision_risk
+from intelligence_services import (
+    DecisionFactory,
+    EvidenceEngine,
+    ImpactEstimator,
+    RiskEngine,
+    ScoringEngine,
+)
 from optimizers.base_optimizer import BaseOptimizer
-from optimizers.config import KeywordOptimizerConfig
-from optimizers.domain_models import Evidence, ImpactEstimate
 from optimizers.opportunity_queue import build_opportunity, sort_opportunities
-from optimizers.scoring import priority_from_confidence
 
 
 class KeywordOptimizer(BaseOptimizer):
     name = "keyword_optimizer"
-    version = "6.1.0"
     decision_types = ["ADD_NEGATIVE_KEYWORD"]
 
-    def __init__(self, context=None, config=None):
-        super().__init__(context=context)
-        self.config = config or KeywordOptimizerConfig()
+    min_spend = 3
+    min_clicks = 2
 
     def collect(self):
         db = SessionLocal()
@@ -36,15 +37,15 @@ class KeywordOptimizer(BaseOptimizer):
                 .filter(SearchTermDailyDetail.channel == "amazon_ads")
                 .filter(SearchTermDailyDetail.profile_id.isnot(None))
                 .filter(SearchTermDailyDetail.country_code.isnot(None))
-                .filter(SearchTermDailyDetail.spend >= self.config.min_spend)
-                .filter(SearchTermDailyDetail.clicks >= self.config.min_clicks)
+                .filter(SearchTermDailyDetail.spend >= self.min_spend)
+                .filter(SearchTermDailyDetail.clicks >= self.min_clicks)
                 .filter(SearchTermDailyDetail.sales == 0)
             )
 
             query = apply_date_context(query, SearchTermDailyDetail, self.context)
             query = apply_marketplace_context(query, SearchTermDailyDetail, self.context)
 
-            self.data = query.order_by(SearchTermDailyDetail.spend.desc()).limit(self.config.max_rows).all()
+            self.data = query.order_by(SearchTermDailyDetail.spend.desc()).limit(25).all()
 
         finally:
             db.close()
@@ -55,7 +56,6 @@ class KeywordOptimizer(BaseOptimizer):
         for row in self.data or []:
             spend = safe_float(row.spend)
             clicks = safe_int(row.clicks)
-            orders = safe_int(row.orders)
 
             confidence = 70
             if clicks >= 5:
@@ -66,7 +66,8 @@ class KeywordOptimizer(BaseOptimizer):
                 confidence += 9
             confidence = min(confidence, 99)
 
-            estimated_impact = round(spend * 30, 2)
+            estimated_impact = ImpactEstimator.negative_keyword(spend)
+            evidence = EvidenceEngine.search_term(row, context=self.context)
 
             payload = {
                 "campaign_id": str(row.campaign_id),
@@ -78,7 +79,6 @@ class KeywordOptimizer(BaseOptimizer):
                 "match_type": row.match_type,
                 "search_term": row.search_term,
                 "negative_match_type": "phrase",
-                "suggested_negative_match_type": "phrase",
                 "profile_id": row.profile_id,
                 "country_code": row.country_code,
                 "marketplace": row.marketplace,
@@ -87,13 +87,13 @@ class KeywordOptimizer(BaseOptimizer):
                 "spend": spend,
                 "clicks": clicks,
                 "sales": safe_float(row.sales),
-                "orders": orders,
+                "orders": safe_int(row.orders),
                 "acos": row.acos,
                 "roas": row.roas,
-                "optimizer_version": self.version,
+                "evidence": evidence,
             }
 
-            risk_assessment = assess_decision_risk(
+            risk_assessment = RiskEngine.evaluate(
                 decision="ADD_NEGATIVE_KEYWORD",
                 confidence=confidence,
                 estimated_monthly_impact=estimated_impact,
@@ -101,46 +101,26 @@ class KeywordOptimizer(BaseOptimizer):
             )
             payload["risk_assessment"] = risk_assessment
 
-            evidence = [
-                Evidence(
-                    source="SearchTermDailyDetail",
-                    metric="spend_without_sales",
-                    value=spend,
-                    description=f"{clicks} clicks, ${spend:.2f} spend, and $0 sales.",
-                    weight=1.0,
+            opportunity = build_opportunity(
+                optimizer=self.name,
+                decision="ADD_NEGATIVE_KEYWORD",
+                title=f"Add negative phrase: {row.search_term}",
+                reason=(
+                    f'"{row.search_term}" spent ${spend:.2f} '
+                    f"with {clicks} clicks and no sales."
                 ),
-                Evidence(
-                    source="SearchTermDailyDetail",
-                    metric="clicks",
-                    value=clicks,
-                    description="Click volume supporting negative keyword decision.",
-                    weight=0.6,
-                ),
-            ]
-
-            opportunities.append(
-                build_opportunity(
-                    optimizer=self.name,
-                    decision="ADD_NEGATIVE_KEYWORD",
-                    title=f"Add negative phrase: {row.search_term}",
-                    reason=(
-                        f'"{row.search_term}" spent ${spend:.2f} '
-                        f"with {clicks} clicks and no sales."
-                    ),
-                    confidence=confidence,
-                    risk=risk_assessment["overall_risk"],
-                    estimated_monthly_impact=estimated_impact,
-                    payload=payload,
-                    evidence=evidence,
-                    impact=ImpactEstimate(
-                        estimated_monthly_impact=estimated_impact,
-                        currency=row.currency,
-                        basis="daily_waste_x_30",
-                        confidence=confidence,
-                    ),
-                    risk_assessment=risk_assessment,
-                )
+                confidence=confidence,
+                risk=risk_assessment["overall_risk"],
+                estimated_monthly_impact=estimated_impact,
+                payload=payload,
             )
+            opportunity["score"] = ScoringEngine.opportunity_score(
+                confidence=confidence,
+                estimated_monthly_impact=estimated_impact,
+                risk=risk_assessment["overall_risk"],
+            )
+            opportunity["evidence"] = evidence
+            opportunities.append(opportunity)
 
         self.opportunities = sort_opportunities(opportunities)
 
@@ -158,21 +138,22 @@ class KeywordOptimizer(BaseOptimizer):
             risk_assessment = payload.get("risk_assessment", {})
 
             decisions.append(
-                make_decision(
+                DecisionFactory.create(
                     decision="ADD_NEGATIVE_KEYWORD",
-                    priority=priority_from_confidence(opportunity["confidence"], opportunity["risk"]),
+                    priority="HIGH" if opportunity["confidence"] >= 85 else "MEDIUM",
                     confidence=opportunity["confidence"],
                     risk=opportunity["risk"],
                     estimated_monthly_impact=opportunity["estimated_monthly_impact"],
                     reasoning=[
                         f"Data window: {self.context.get('start_date')} to {self.context.get('end_date')}.",
-                        opportunity["reason"],
+                        *EvidenceEngine.summarize(payload.get("evidence", {})),
                         "Negative keyword action is reversible and does not increase spend.",
                         f"Opportunity score: {opportunity['score']}.",
                         f"Risk assessment: {risk_assessment.get('overall_risk')}.",
                     ],
                     recommended_action=opportunity["title"],
                     payload=payload,
+                    evidence=payload.get("evidence"),
                 )
             )
 
