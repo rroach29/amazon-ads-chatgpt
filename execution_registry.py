@@ -1,9 +1,14 @@
 """
-Business OS v3.6.1
-Execution Action Registry
+Business OS v3.6.1b
+Execution Registry Import Fix
 
-Central registry for actions supported by the execution planner and batch engine.
+This file restores execute_registered_action(), which execution_engine.py imports.
+
+It also keeps the v3.6.1 action metadata used by the planner.
 """
+
+from amazon_execution import execute_amazon_action
+
 
 ACTION_REGISTRY = {
     "PAUSE_CAMPAIGN": {
@@ -124,3 +129,45 @@ def list_execution_actions():
             "confirm_live": True,
         },
     }
+
+
+def execute_registered_action(action, profile_id, country_code, payload, dry_run=True):
+    """
+    Compatibility function required by execution_engine.py.
+
+    Delegates currently live-supported Amazon Ads actions to amazon_execution.py.
+    Unsupported actions return a structured failure instead of crashing import/runtime.
+    """
+    metadata = get_action_metadata(action)
+
+    if not metadata.get("supported"):
+        return {
+            "success": False,
+            "dry_run": dry_run,
+            "action": action,
+            "error_message": metadata.get("reason") or f"Action {action} is not supported.",
+            "response_json": {
+                "status": "UNSUPPORTED_ACTION",
+                "metadata": metadata,
+            },
+        }
+
+    if metadata.get("platform") != "amazon_ads":
+        return {
+            "success": False,
+            "dry_run": dry_run,
+            "action": action,
+            "error_message": f"Unsupported execution platform: {metadata.get('platform')}",
+            "response_json": {
+                "status": "UNSUPPORTED_PLATFORM",
+                "metadata": metadata,
+            },
+        }
+
+    return execute_amazon_action(
+        action=action,
+        profile_id=profile_id,
+        country_code=country_code,
+        payload=payload,
+        dry_run=dry_run,
+    )
