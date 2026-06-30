@@ -171,6 +171,26 @@ def execute_increase_budget(decision):
     )
 
 
+def execute_decrease_budget(decision):
+    payload = decision.payload or {}
+
+    return _base_result(
+        decision=decision,
+        action="DECREASE_BUDGET",
+        message=(
+            f"Would decrease budget by "
+            f"{payload.get('suggested_budget_decrease_percent') or abs(payload.get('change_percent') or 0)}%"
+        ),
+        payload=payload,
+        undo_supported=True,
+        undo_action="RESTORE_PREVIOUS_BUDGET",
+        amazon_request={
+            "campaign_id": payload.get("campaign_id"),
+            "decrease_percent": payload.get("suggested_budget_decrease_percent") or abs(payload.get("change_percent") or 0),
+        },
+    )
+
+
 EXECUTION_HANDLERS = {
     "PAUSE_CAMPAIGN": execute_pause_campaign,
     "ADD_NEGATIVE_KEYWORD": execute_add_negative_keyword,
@@ -178,4 +198,5 @@ EXECUTION_HANDLERS = {
     "REDUCE_BID": execute_reduce_bid,
     "INCREASE_BID": execute_increase_bid,
     "INCREASE_BUDGET": execute_increase_budget,
+    "DECREASE_BUDGET": execute_decrease_budget,
 }

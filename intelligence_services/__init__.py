@@ -18,3 +18,4 @@ __all__ = [
     "DecisionFactory",
     "BidPolicy",
 ]
+from intelligence_services.budget_policy import BudgetPolicy

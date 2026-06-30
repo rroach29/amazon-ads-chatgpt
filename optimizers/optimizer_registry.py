@@ -10,12 +10,14 @@ opportunity queue.
 from business_data_context import resolve_data_context
 from optimizers.keyword_optimizer import KeywordOptimizer
 from optimizers.bid_optimizer import BidOptimizer
+from optimizers.budget_optimizer import BudgetOptimizer
 from optimizers.opportunity_queue import sort_opportunities
 
 
 REGISTERED_OPTIMIZERS = [
     KeywordOptimizer,
     BidOptimizer,
+    BudgetOptimizer,
 ]
 
 

@@ -25,6 +25,7 @@ ACTION_BASE_RISK = {
     "DECREASE_BUDGET": "MEDIUM",
     "SET_BUDGET": "MEDIUM",
     "INCREASE_BUDGET": "MEDIUM",
+    "DECREASE_BUDGET": "MEDIUM",
     "PAUSE_CAMPAIGN": "HIGH",
     "RESUME_CAMPAIGN": "MEDIUM",
 }
@@ -105,6 +106,10 @@ def assess_decision_risk(
     if action == "REDUCE_BID":
         risk_rank = max(risk_rank, 2)
         factors.append("Bid reductions may reduce traffic but are reversible.")
+
+    if action == "DECREASE_BUDGET":
+        risk_rank = max(risk_rank, 2)
+        factors.append("Budget decreases may reduce traffic but are reversible.")
 
     risk_rank = max(1, min(3, risk_rank))
     overall_risk = _risk_from_rank(risk_rank)
