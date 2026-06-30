@@ -8,6 +8,7 @@ from learning.evaluator import (
     recalculate_learning_from_evaluated_decisions,
 )
 from learning.summary import build_learning_intelligence
+from outcome_intelligence import LearningEngine
 
 router = APIRouter()
 
@@ -41,6 +42,47 @@ def business_os_learning_intelligence(
 ):
     verify_key(x_api_key)
     return build_learning_intelligence()
+
+
+@router.get("/feedback")
+def business_os_learning_feedback(
+    x_api_key: str = Header(...),
+):
+    verify_key(x_api_key)
+    return LearningEngine.feedback_summary()
+
+
+@router.get("/events")
+def business_os_learning_events(
+    limit: int = 100,
+    x_api_key: str = Header(...),
+):
+    verify_key(x_api_key)
+    return LearningEngine.learning_events(limit=limit)
+
+
+@router.get("/confidence-history")
+def business_os_confidence_history(
+    limit: int = 100,
+    x_api_key: str = Header(...),
+):
+    verify_key(x_api_key)
+    return LearningEngine.confidence_history(limit=limit)
+
+
+@router.get("/confidence-adjustment/{decision_type}")
+def business_os_confidence_adjustment(
+    decision_type: str,
+    optimizer_name: str | None = None,
+    default_confidence: float = 70,
+    x_api_key: str = Header(...),
+):
+    verify_key(x_api_key)
+    return LearningEngine.confidence_adjustment_for(
+        decision_type=decision_type,
+        optimizer_name=optimizer_name,
+        default_confidence=default_confidence,
+    )
 
 
 @router.post("/decisions/{decision_id}/evaluate")
