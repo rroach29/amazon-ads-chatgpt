@@ -7,6 +7,7 @@ from admin_migrations import (
     migrate_v3_4_1_execution_framework,
     migrate_v7_0_business_knowledge_graph,
     migrate_v8_6_revenue_intelligence,
+    migrate_v8_9_seller_central_pipeline,
 )
 
 router = APIRouter()
@@ -36,8 +37,13 @@ def admin_migrate_v7_0(x_api_key: str = Header(...)):
     return migrate_v7_0_business_knowledge_graph()
 
 
-
 @router.post("/migrate/v8.6")
 def admin_migrate_v8_6(x_api_key: str = Header(...)):
     verify_key(x_api_key)
     return migrate_v8_6_revenue_intelligence()
+
+
+@router.post("/migrate/v8.9")
+def admin_migrate_v8_9(x_api_key: str = Header(...)):
+    verify_key(x_api_key)
+    return migrate_v8_9_seller_central_pipeline()

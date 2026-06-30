@@ -388,3 +388,105 @@ def migrate_v8_6_revenue_intelligence():
         }
     finally:
         db.close()
+
+
+MIGRATION_V8_9_SQL = """
+CREATE TABLE IF NOT EXISTS sp_api_report_jobs (
+    id SERIAL PRIMARY KEY,
+    created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+    requested_at TIMESTAMP WITHOUT TIME ZONE,
+    completed_at TIMESTAMP WITHOUT TIME ZONE,
+
+    report_type VARCHAR(100) DEFAULT 'GET_SALES_AND_TRAFFIC_REPORT',
+    report_id VARCHAR(255),
+    report_document_id VARCHAR(255),
+
+    status VARCHAR(50) DEFAULT 'REQUESTED',
+    processing_status VARCHAR(50),
+    error_message TEXT,
+
+    marketplace VARCHAR(100),
+    marketplace_id VARCHAR(100),
+    country_code VARCHAR(10),
+    currency VARCHAR(10),
+    profile_id VARCHAR(100),
+
+    start_date DATE,
+    end_date DATE,
+    asin_granularity VARCHAR(50) DEFAULT 'CHILD',
+    date_granularity VARCHAR(50) DEFAULT 'DAY',
+
+    request_payload JSONB,
+    response_payload JSONB,
+    collect_result JSONB
+);
+
+CREATE INDEX IF NOT EXISTS ix_sp_api_report_jobs_report_id ON sp_api_report_jobs(report_id);
+CREATE INDEX IF NOT EXISTS ix_sp_api_report_jobs_status ON sp_api_report_jobs(status);
+CREATE INDEX IF NOT EXISTS ix_sp_api_report_jobs_processing_status ON sp_api_report_jobs(processing_status);
+CREATE INDEX IF NOT EXISTS ix_sp_api_report_jobs_report_type ON sp_api_report_jobs(report_type);
+CREATE INDEX IF NOT EXISTS ix_sp_api_report_jobs_marketplace ON sp_api_report_jobs(marketplace);
+CREATE INDEX IF NOT EXISTS ix_sp_api_report_jobs_marketplace_id ON sp_api_report_jobs(marketplace_id);
+CREATE INDEX IF NOT EXISTS ix_sp_api_report_jobs_country_code ON sp_api_report_jobs(country_code);
+CREATE INDEX IF NOT EXISTS ix_sp_api_report_jobs_profile_id ON sp_api_report_jobs(profile_id);
+CREATE INDEX IF NOT EXISTS ix_sp_api_report_jobs_start_date ON sp_api_report_jobs(start_date);
+CREATE INDEX IF NOT EXISTS ix_sp_api_report_jobs_end_date ON sp_api_report_jobs(end_date);
+"""
+
+
+def migrate_v8_9_seller_central_pipeline():
+    db = SessionLocal()
+    try:
+        ensure_schema_migrations_table(db)
+
+        existing = db.execute(
+            text("SELECT version FROM schema_migrations WHERE version = 'v8.9';")
+        ).fetchone()
+
+        if existing:
+            return {
+                "status": "SKIPPED",
+                "message": "Migration v8.9 has already been applied.",
+                "version": "v8.9",
+            }
+
+        db.execute(text(MIGRATION_V8_9_SQL))
+        db.execute(
+            text(
+                """
+                INSERT INTO schema_migrations (version, name, status, applied_at, details)
+                VALUES (
+                    'v8.9',
+                    'Seller Central Data Pipeline',
+                    'APPLIED',
+                    NOW(),
+                    '{
+                      "tables": ["sp_api_report_jobs"],
+                      "source": "SP-API Reports API",
+                      "first_report": "GET_SALES_AND_TRAFFIC_REPORT",
+                      "pipeline": "request_poll_download_ingest"
+                    }'::JSONB
+                )
+                ON CONFLICT (version) DO NOTHING;
+                """
+            )
+        )
+        db.commit()
+
+        return {
+            "status": "OK",
+            "message": "Migration v8.9 applied successfully.",
+            "version": "v8.9",
+            "tables": ["sp_api_report_jobs"],
+        }
+
+    except Exception as exc:
+        db.rollback()
+        return {
+            "status": "ERROR",
+            "message": "Migration v8.9 failed.",
+            "error": str(exc),
+        }
+    finally:
+        db.close()

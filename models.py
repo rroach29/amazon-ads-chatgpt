@@ -302,3 +302,42 @@ class SellerCentralSalesTraffic(Base):
     report_type = Column(String, default="GET_SALES_AND_TRAFFIC_REPORT")
     raw = Column(JSON)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SPAPIReportJob(Base):
+    """Tracked SP-API report lifecycle jobs.
+
+    v8.9 uses this table to turn Sales & Traffic report collection from a
+    manual report-id workflow into a persistent Seller Central data pipeline.
+    """
+
+    __tablename__ = "sp_api_report_jobs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+    requested_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+
+    report_type = Column(String, index=True, default="GET_SALES_AND_TRAFFIC_REPORT")
+    report_id = Column(String, index=True, nullable=True)
+    report_document_id = Column(String, index=True, nullable=True)
+
+    status = Column(String, index=True, default="REQUESTED")
+    processing_status = Column(String, index=True, nullable=True)
+    error_message = Column(Text, nullable=True)
+
+    marketplace = Column(String, index=True, nullable=True)
+    marketplace_id = Column(String, index=True, nullable=True)
+    country_code = Column(String, index=True, nullable=True)
+    currency = Column(String, nullable=True)
+    profile_id = Column(String, index=True, nullable=True)
+
+    start_date = Column(Date, index=True, nullable=True)
+    end_date = Column(Date, index=True, nullable=True)
+    asin_granularity = Column(String, default="CHILD")
+    date_granularity = Column(String, default="DAY")
+
+    request_payload = Column(JSON, nullable=True)
+    response_payload = Column(JSON, nullable=True)
+    collect_result = Column(JSON, nullable=True)

@@ -1,4 +1,4 @@
-"""Business OS v8.8.1 — SP-API live connection routes."""
+"""Business OS v8.9 — SP-API routes and Seller Central data pipeline."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Header
 
 from auth import verify_key
-from sp_api import SPAPIClient, SPAPIConfig, SalesTrafficIngestionService
+from sp_api import SPAPIClient, SPAPIConfig, SalesTrafficIngestionService, SPAPIReportPipelineService
 
 router = APIRouter()
 
@@ -46,6 +46,105 @@ def business_os_sp_api_marketplaces(
     return _client(marketplace).get_marketplace_participations()
 
 
+@router.get("/sp-api/pipeline/diagnostics")
+def business_os_sp_api_pipeline_diagnostics(x_api_key: str = Header(...)):
+    verify_key(x_api_key)
+    return SPAPIReportPipelineService.diagnostics()
+
+
+@router.get("/sp-api/pipeline/jobs")
+def business_os_sp_api_pipeline_jobs(
+    limit: int = 25,
+    x_api_key: str = Header(...),
+):
+    verify_key(x_api_key)
+    return SPAPIReportPipelineService.list_jobs(limit=limit)
+
+
+@router.get("/sp-api/pipeline/jobs/{job_id}")
+def business_os_sp_api_pipeline_job(
+    job_id: int,
+    x_api_key: str = Header(...),
+):
+    verify_key(x_api_key)
+    return SPAPIReportPipelineService.get_job(job_id)
+
+
+@router.post("/sp-api/pipeline/sales-traffic/request")
+def business_os_sp_api_pipeline_request_sales_traffic(
+    start_date: str,
+    end_date: str,
+    marketplace: str | None = None,
+    marketplace_id: str | None = None,
+    country_code: str | None = None,
+    currency: str | None = None,
+    profile_id: str | None = None,
+    asin_granularity: str = "CHILD",
+    date_granularity: str = "DAY",
+    x_api_key: str = Header(...),
+):
+    """Request and persist a Sales & Traffic report job."""
+    verify_key(x_api_key)
+    return SPAPIReportPipelineService.request_sales_traffic_job(
+        start_date=start_date,
+        end_date=end_date,
+        marketplace=marketplace,
+        marketplace_id=marketplace_id,
+        country_code=country_code,
+        currency=currency,
+        profile_id=profile_id,
+        asin_granularity=asin_granularity,
+        date_granularity=date_granularity,
+    )
+
+
+@router.post("/sp-api/pipeline/jobs/{job_id}/poll")
+def business_os_sp_api_pipeline_poll_job(
+    job_id: int,
+    x_api_key: str = Header(...),
+):
+    verify_key(x_api_key)
+    return SPAPIReportPipelineService.poll_job(job_id)
+
+
+@router.post("/sp-api/pipeline/jobs/{job_id}/collect")
+def business_os_sp_api_pipeline_collect_job(
+    job_id: int,
+    x_api_key: str = Header(...),
+):
+    verify_key(x_api_key)
+    return SPAPIReportPipelineService.collect_job(job_id)
+
+
+@router.post("/sp-api/pipeline/sales-traffic/run")
+def business_os_sp_api_pipeline_run_sales_traffic(
+    start_date: str,
+    end_date: str,
+    marketplace: str | None = None,
+    marketplace_id: str | None = None,
+    country_code: str | None = None,
+    currency: str | None = None,
+    profile_id: str | None = None,
+    asin_granularity: str = "CHILD",
+    date_granularity: str = "DAY",
+    x_api_key: str = Header(...),
+):
+    """Request + initial poll for Sales & Traffic report. Collect when DONE."""
+    verify_key(x_api_key)
+    return SPAPIReportPipelineService.run_once(
+        start_date=start_date,
+        end_date=end_date,
+        marketplace=marketplace,
+        marketplace_id=marketplace_id,
+        country_code=country_code,
+        currency=currency,
+        profile_id=profile_id,
+        asin_granularity=asin_granularity,
+        date_granularity=date_granularity,
+    )
+
+
+# Backward-compatible v8.8.1 endpoints.
 @router.post("/sp-api/reports/sales-traffic/request")
 def business_os_sp_api_request_sales_traffic_report(
     start_date: str,
@@ -124,11 +223,6 @@ def business_os_sp_api_run_sales_traffic_report(
     date_granularity: str = "DAY",
     x_api_key: str = Header(...),
 ):
-    """Request a Sales & Traffic report and return the report ID when created.
-
-    Amazon generates reports asynchronously. After this returns a reportId, use
-    GET /business-os/sp-api/reports/{report_id}/status until DONE, then collect.
-    """
     verify_key(x_api_key)
     client = _client(marketplace)
     requested = client.request_sales_and_traffic_report(
