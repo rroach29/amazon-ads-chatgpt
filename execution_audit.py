@@ -1,16 +1,15 @@
 """
-Business OS v3.5.1
-Execution Audit + Safe Rollback
+Business OS v3.7.0
+Execution Audit + Budget Rollback
 
-Adds:
-- compact execution audit trail
-- execution detail summaries
-- safe rollback for PAUSE_CAMPAIGN and RESUME_CAMPAIGN
+Adds budget rollback support when an execution result contains:
+- current_budget
+- new_budget
 
-Important:
-- Rollback is guarded.
-- Dry-run is default.
-- Live rollback requires dry_run=false and confirm_live=true.
+Supported rollback actions:
+- PAUSE_CAMPAIGN  -> RESUME_CAMPAIGN
+- RESUME_CAMPAIGN -> PAUSE_CAMPAIGN
+- SET_BUDGET / INCREASE_BUDGET / DECREASE_BUDGET -> SET_BUDGET back to previous budget
 """
 
 from datetime import datetime
@@ -23,6 +22,9 @@ from execution_engine import run_execution_job, serialize_execution_job, seriali
 ROLLBACK_ACTIONS = {
     "PAUSE_CAMPAIGN": "RESUME_CAMPAIGN",
     "RESUME_CAMPAIGN": "PAUSE_CAMPAIGN",
+    "SET_BUDGET": "SET_BUDGET",
+    "INCREASE_BUDGET": "SET_BUDGET",
+    "DECREASE_BUDGET": "SET_BUDGET",
 }
 
 
@@ -87,18 +89,43 @@ def _summarize_amazon_result(result):
         "errors": errors,
         "error_message": result.error_message,
         "execution_time_ms": result.execution_time_ms,
+        "current_budget": response_json.get("current_budget"),
+        "new_budget": response_json.get("new_budget"),
+        "budget_change": response_json.get("budget_change"),
+        "budget_change_percent": response_json.get("budget_change_percent"),
+        "budget_validation": response_json.get("budget_validation"),
         "created_at": result.created_at.isoformat() if result.created_at else None,
     }
+
+
+def _latest_result_for_job(db, job_id):
+    return (
+        db.query(ExecutionResult)
+        .filter(ExecutionResult.execution_job_id == job_id)
+        .order_by(ExecutionResult.created_at.desc())
+        .first()
+    )
+
+
+def _rollback_available(job, latest_result=None):
+    if not job or job.status != "COMPLETED" or job.dry_run:
+        return False
+
+    if job.action in ["PAUSE_CAMPAIGN", "RESUME_CAMPAIGN"]:
+        return True
+
+    if job.action in ["SET_BUDGET", "INCREASE_BUDGET", "DECREASE_BUDGET"]:
+        response_json = latest_result.response_json if latest_result and isinstance(latest_result.response_json, dict) else {}
+        return response_json.get("current_budget") is not None
+
+    return False
 
 
 def get_execution_audit(limit=50, status=None, action=None, live_only=False):
     db = SessionLocal()
 
     try:
-        query = (
-            db.query(ExecutionJob)
-            .order_by(ExecutionJob.created_at.desc())
-        )
+        query = db.query(ExecutionJob).order_by(ExecutionJob.created_at.desc())
 
         if status:
             query = query.filter(ExecutionJob.status == status)
@@ -110,16 +137,10 @@ def get_execution_audit(limit=50, status=None, action=None, live_only=False):
             query = query.filter(ExecutionJob.dry_run == False)  # noqa: E712
 
         jobs = query.limit(limit).all()
-
         items = []
 
         for job in jobs:
-            latest_result = (
-                db.query(ExecutionResult)
-                .filter(ExecutionResult.execution_job_id == job.id)
-                .order_by(ExecutionResult.created_at.desc())
-                .first()
-            )
+            latest_result = _latest_result_for_job(db, job.id)
 
             items.append({
                 "execution_job_id": job.id,
@@ -136,7 +157,7 @@ def get_execution_audit(limit=50, status=None, action=None, live_only=False):
                 "completed_at": job.completed_at.isoformat() if job.completed_at else None,
                 "payload": _compact_payload(job.payload),
                 "latest_result": _summarize_amazon_result(latest_result) if latest_result else None,
-                "rollback_available": job.action in ROLLBACK_ACTIONS and job.status == "COMPLETED" and not job.dry_run,
+                "rollback_available": _rollback_available(job, latest_result),
                 "rollback_action": ROLLBACK_ACTIONS.get(job.action),
             })
 
@@ -154,11 +175,7 @@ def get_execution_audit_detail(execution_job_id):
     db = SessionLocal()
 
     try:
-        job = (
-            db.query(ExecutionJob)
-            .filter(ExecutionJob.id == execution_job_id)
-            .first()
-        )
+        job = db.query(ExecutionJob).filter(ExecutionJob.id == execution_job_id).first()
 
         if not job:
             return {
@@ -173,6 +190,8 @@ def get_execution_audit_detail(execution_job_id):
             .all()
         )
 
+        latest_result = results[0] if results else None
+
         return {
             "status": "OK",
             "job": serialize_execution_job(job),
@@ -180,7 +199,7 @@ def get_execution_audit_detail(execution_job_id):
             "results": [serialize_execution_result(row) for row in results],
             "result_summaries": [_summarize_amazon_result(row) for row in results],
             "rollback": {
-                "available": job.action in ROLLBACK_ACTIONS and job.status == "COMPLETED" and not job.dry_run,
+                "available": _rollback_available(job, latest_result),
                 "rollback_action": ROLLBACK_ACTIONS.get(job.action),
                 "live_rollback_requires": "dry_run=false and confirm_live=true",
             },
@@ -190,21 +209,50 @@ def get_execution_audit_detail(execution_job_id):
         db.close()
 
 
+def _build_budget_rollback_payload(original, latest_result):
+    original_payload = original.payload if isinstance(original.payload, dict) else {}
+    decision_payload = original_payload.get("payload") if isinstance(original_payload.get("payload"), dict) else {}
+
+    response_json = latest_result.response_json if latest_result and isinstance(latest_result.response_json, dict) else {}
+    previous_budget = response_json.get("current_budget")
+
+    if previous_budget is None:
+        return None
+
+    rollback_payload = dict(original_payload)
+    rollback_decision_payload = dict(decision_payload)
+
+    rollback_decision_payload["new_budget"] = previous_budget
+    rollback_decision_payload["budget"] = previous_budget
+    rollback_decision_payload["rollback_previous_budget"] = previous_budget
+    rollback_decision_payload["rollback_of_execution_job_id"] = original.id
+    rollback_decision_payload["rollback_of_action"] = original.action
+
+    rollback_payload["payload"] = rollback_decision_payload
+    rollback_payload["rollback_of_execution_job_id"] = original.id
+    rollback_payload["rollback_of_action"] = original.action
+    rollback_payload["decision"] = "SET_BUDGET"
+    rollback_payload["recommended_action"] = (
+        f"Rollback {original.action} from execution job {original.id}; "
+        f"restore budget to {previous_budget}."
+    )
+
+    return rollback_payload
+
+
 def rollback_execution(execution_job_id, dry_run=True, confirm_live=False, requested_by="GPT"):
     db = SessionLocal()
 
     try:
-        original = (
-            db.query(ExecutionJob)
-            .filter(ExecutionJob.id == execution_job_id)
-            .first()
-        )
+        original = db.query(ExecutionJob).filter(ExecutionJob.id == execution_job_id).first()
 
         if not original:
             return {
                 "status": "NO_DATA",
                 "message": f"Execution job {execution_job_id} not found.",
             }
+
+        latest_result = _latest_result_for_job(db, original.id)
 
         if original.status != "COMPLETED":
             return {
@@ -227,17 +275,31 @@ def rollback_execution(execution_job_id, dry_run=True, confirm_live=False, reque
                 "supported_rollback_actions": ROLLBACK_ACTIONS,
             }
 
+        if not _rollback_available(original, latest_result):
+            return {
+                "status": "REJECTED",
+                "message": "Rollback is not available because required before/after audit data is missing.",
+            }
+
         if not dry_run and not confirm_live:
             return {
                 "status": "REJECTED",
                 "message": "Live rollback requires confirm_live=true.",
             }
 
-        rollback_payload = dict(original.payload or {})
-        rollback_payload["rollback_of_execution_job_id"] = original.id
-        rollback_payload["rollback_of_action"] = original.action
-        rollback_payload["decision"] = rollback_action
-        rollback_payload["recommended_action"] = f"Rollback {original.action} from execution job {original.id}"
+        if original.action in ["SET_BUDGET", "INCREASE_BUDGET", "DECREASE_BUDGET"]:
+            rollback_payload = _build_budget_rollback_payload(original, latest_result)
+            if rollback_payload is None:
+                return {
+                    "status": "REJECTED",
+                    "message": "Budget rollback requires current_budget stored on the original execution result.",
+                }
+        else:
+            rollback_payload = dict(original.payload or {})
+            rollback_payload["rollback_of_execution_job_id"] = original.id
+            rollback_payload["rollback_of_action"] = original.action
+            rollback_payload["decision"] = rollback_action
+            rollback_payload["recommended_action"] = f"Rollback {original.action} from execution job {original.id}"
 
         rollback_job = ExecutionJob(
             decision_id=original.decision_id,
