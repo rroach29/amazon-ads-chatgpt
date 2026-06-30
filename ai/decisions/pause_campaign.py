@@ -33,7 +33,9 @@ def get_pause_campaign_decisions(min_spend=25, min_clicks=20, limit=20):
         rows = (
             db.query(CampaignDailyDetail)
             .filter(CampaignDailyDetail.channel == "amazon_ads")
-            .filter(CampaignDailyDetail.spend >= min_spend)
+.filter(CampaignDailyDetail.profile_id.isnot(None))
+.filter(CampaignDailyDetail.country_code.isnot(None))
+.filter(CampaignDailyDetail.spend >= min_spend)
             .filter(CampaignDailyDetail.clicks >= min_clicks)
             .filter(CampaignDailyDetail.sales == 0)
             .order_by(CampaignDailyDetail.spend.desc())
