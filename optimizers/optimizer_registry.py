@@ -1,9 +1,10 @@
 """
-Business OS v6.0.0
+Business OS v6.1.0
 Optimizer Registry
 
 Mission Control and planners should not know individual optimizer internals.
-They ask the registry to run all registered optimizers.
+They ask the registry to run all registered optimizers and receive one ranked
+opportunity queue.
 """
 
 from business_data_context import resolve_data_context
@@ -25,6 +26,7 @@ def list_optimizers():
         "optimizers": [
             {
                 "name": optimizer.name,
+                "version": getattr(optimizer, "version", None),
                 "decision_types": optimizer.decision_types,
             }
             for optimizer in REGISTERED_OPTIMIZERS
@@ -43,11 +45,7 @@ def run_optimizer(name, context=None):
     }
 
 
-def run_all_optimizers(
-    window="latest",
-    country_code=None,
-    profile_id=None,
-):
+def run_all_optimizers(window="latest", country_code=None, profile_id=None):
     context = resolve_data_context(
         window=window,
         country_code=country_code,
@@ -73,4 +71,8 @@ def run_all_optimizers(
         "decision_count": len(decisions),
         "opportunity_queue": sort_opportunities(opportunities),
         "decisions": decisions,
+        "metrics": {
+            "optimizer_statuses": [item.get("metrics") for item in results],
+            "error_count": len([item for item in results if item.get("status") == "ERROR"]),
+        },
     }

@@ -1,33 +1,13 @@
 """
-Business OS v6.0.0
+Business OS v6.1.0
 Opportunity Queue
 
-All optimizers emit standardized opportunities.
-The queue ranks them before they become plans or execution candidates.
+All optimizers emit standardized opportunities. This module preserves the
+existing dict API while internally supporting typed opportunity objects.
 """
 
-
-def _safe_float(value, default=0):
-    try:
-        return float(value or default)
-    except Exception:
-        return default
-
-
-def opportunity_score(confidence=70, impact=0, risk="LOW"):
-    confidence = _safe_float(confidence)
-    impact = _safe_float(impact)
-
-    if risk == "LOW":
-        risk_factor = 1.0
-    elif risk == "MEDIUM":
-        risk_factor = 0.75
-    else:
-        risk_factor = 0.45
-
-    # Simple v6.0 score. Later releases can include learning, seasonality, margin, etc.
-    raw_score = (confidence * 0.65) + min(impact / 10, 35)
-    return round(raw_score * risk_factor, 2)
+from optimizers.domain_models import Evidence, ImpactEstimate, Opportunity, RiskProfile
+from optimizers.scoring import opportunity_score, safe_float
 
 
 def build_opportunity(
@@ -39,33 +19,63 @@ def build_opportunity(
     risk,
     estimated_monthly_impact,
     payload=None,
+    evidence=None,
+    impact=None,
+    risk_assessment=None,
 ):
     payload = payload if isinstance(payload, dict) else {}
+    evidence = evidence if isinstance(evidence, list) else []
 
-    return {
-        "optimizer": optimizer,
-        "decision": decision,
-        "title": title,
-        "reason": reason,
-        "confidence": confidence,
-        "risk": risk,
-        "estimated_monthly_impact": estimated_monthly_impact,
-        "score": opportunity_score(
+    normalized_evidence = []
+    for item in evidence:
+        if isinstance(item, Evidence):
+            normalized_evidence.append(item)
+        elif isinstance(item, dict):
+            normalized_evidence.append(Evidence(**item))
+
+    risk_profile = None
+    if isinstance(risk_assessment, RiskProfile):
+        risk_profile = risk_assessment
+    elif isinstance(risk_assessment, dict):
+        risk_profile = RiskProfile.from_dict(risk_assessment)
+    elif isinstance(payload.get("risk_assessment"), dict):
+        risk_profile = RiskProfile.from_dict(payload.get("risk_assessment"))
+
+    impact_estimate = None
+    if isinstance(impact, ImpactEstimate):
+        impact_estimate = impact
+    elif isinstance(impact, dict):
+        impact_estimate = ImpactEstimate(**impact)
+
+    opportunity = Opportunity(
+        optimizer=optimizer,
+        decision=decision,
+        title=title,
+        reason=reason,
+        confidence=confidence,
+        risk=risk,
+        estimated_monthly_impact=estimated_monthly_impact,
+        score=opportunity_score(
             confidence=confidence,
             impact=estimated_monthly_impact,
             risk=risk,
         ),
-        "payload": payload,
-    }
+        payload=payload,
+        evidence=normalized_evidence,
+        impact=impact_estimate,
+        risk_assessment=risk_profile,
+    )
+
+    return opportunity.to_dict()
 
 
 def sort_opportunities(opportunities):
     return sorted(
         opportunities or [],
         key=lambda item: (
-            _safe_float(item.get("score")),
-            _safe_float(item.get("estimated_monthly_impact")),
-            _safe_float(item.get("confidence")),
+            safe_float(item.get("score")),
+            safe_float(item.get("estimated_monthly_impact")),
+            safe_float(item.get("confidence")),
         ),
         reverse=True,
     )

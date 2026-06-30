@@ -64,6 +64,17 @@ ACTION_REGISTRY = {
         "requires_keyword_id": True,
         "rollback_action": None,
     },
+
+    "INCREASE_BID": {
+        "action": "INCREASE_BID",
+        "supported": True,
+        "live_supported": True,
+        "platform": "amazon_ads",
+        "resource_type": "keyword",
+        "requires_campaign_identity": True,
+        "requires_keyword_id": True,
+        "rollback_action": None,
+    },
     "SET_BID": {
         "action": "SET_BID",
         "supported": False,

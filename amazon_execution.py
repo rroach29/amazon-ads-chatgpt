@@ -507,6 +507,9 @@ def _resolve_bid(payload, mode, live_current_bid=None):
             "change_percent",
             "suggested_bid_reduction_percent",
             "suggestedBidReductionPercent",
+            "increase_percent",
+            "suggested_bid_increase_percent",
+            "suggestedBidIncreasePercent",
         )
     )
 
@@ -529,10 +532,14 @@ def _resolve_bid(payload, mode, live_current_bid=None):
     if percent is not None:
         if mode == "REDUCE_BID":
             return _round_money(current_bid * (1 - percent / 100))
+        if mode == "INCREASE_BID":
+            return _round_money(current_bid * (1 + percent / 100))
 
     if amount is not None:
         if mode == "REDUCE_BID":
             return _round_money(current_bid - amount)
+        if mode == "INCREASE_BID":
+            return _round_money(current_bid + amount)
 
     return _round_money(explicit_bid)
 
@@ -685,7 +692,7 @@ def set_budget(profile_id, country_code, payload, dry_run=True, action="SET_BUDG
     return result
 
 
-def reduce_bid(profile_id, country_code, payload, dry_run=True):
+def change_bid(profile_id, country_code, payload, dry_run=True, action="REDUCE_BID"):
     keyword_id = _get_keyword_id(payload)
 
     live_keyword_result = get_keyword_live(
@@ -700,7 +707,7 @@ def reduce_bid(profile_id, country_code, payload, dry_run=True):
             "dry_run": dry_run,
             "http_status": live_keyword_result.get("http_status"),
             "amazon_request_id": live_keyword_result.get("amazon_request_id"),
-            "action": "REDUCE_BID",
+            "action": action,
             "keyword_id": keyword_id,
             "response_json": live_keyword_result,
             "error_message": live_keyword_result.get("error_message"),
@@ -708,7 +715,7 @@ def reduce_bid(profile_id, country_code, payload, dry_run=True):
 
     live_keyword = live_keyword_result.get("keyword")
     current_bid = _extract_bid_from_keyword(live_keyword)
-    new_bid = _resolve_bid(payload, "REDUCE_BID", live_current_bid=current_bid)
+    new_bid = _resolve_bid(payload, action, live_current_bid=current_bid)
 
     validation_errors, validation_warnings = _validate_bid_change(
         current_bid=current_bid,
@@ -719,7 +726,7 @@ def reduce_bid(profile_id, country_code, payload, dry_run=True):
         return {
             "success": False,
             "dry_run": dry_run,
-            "action": "REDUCE_BID",
+            "action": action,
             "keyword_id": keyword_id,
             "current_bid": current_bid,
             "new_bid": new_bid,
@@ -760,16 +767,25 @@ def reduce_bid(profile_id, country_code, payload, dry_run=True):
     }
 
     if dry_run:
-        return _dry_run_result("REDUCE_BID", profile_id, country_code, keyword_id, update_payload, extra=bid_audit)
+        return _dry_run_result(action, profile_id, country_code, keyword_id, update_payload, extra=bid_audit)
 
     result = _send_keyword_update(profile_id, country_code, update_payload)
     result.update({
-        "action": "REDUCE_BID",
+        "action": action,
         "keyword_id": keyword_id,
         "request_payload": update_payload,
         **bid_audit,
     })
     return result
+
+
+
+def reduce_bid(profile_id, country_code, payload, dry_run=True):
+    return change_bid(profile_id, country_code, payload, dry_run=dry_run, action="REDUCE_BID")
+
+
+def increase_bid(profile_id, country_code, payload, dry_run=True):
+    return change_bid(profile_id, country_code, payload, dry_run=dry_run, action="INCREASE_BID")
 
 
 def execute_amazon_action(action, profile_id, country_code, payload, dry_run=True):
@@ -790,6 +806,9 @@ def execute_amazon_action(action, profile_id, country_code, payload, dry_run=Tru
 
     if action == "REDUCE_BID":
         return reduce_bid(profile_id, country_code, payload, dry_run=dry_run)
+
+    if action == "INCREASE_BID":
+        return increase_bid(profile_id, country_code, payload, dry_run=dry_run)
 
     raise HTTPException(
         status_code=400,

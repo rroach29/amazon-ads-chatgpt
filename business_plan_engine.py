@@ -27,6 +27,7 @@ ACTION_WEIGHTS = {
     "PAUSE_CAMPAIGN": 1.0,
     "ADD_NEGATIVE_KEYWORD": 0.9,
     "REDUCE_BID": 0.8,
+    "INCREASE_BID": 0.7,
     "INCREASE_BUDGET": 0.7,
     "DECREASE_BUDGET": 0.8,
     "SET_BUDGET": 0.7,
@@ -216,7 +217,7 @@ def _decision_exclusion_reasons(
         if not payload.get("search_term"):
             reasons.append("Search-term action is missing search_term.")
 
-    if decision_type in ["REDUCE_BID", "SET_BID"]:
+    if decision_type in ["REDUCE_BID", "INCREASE_BID", "SET_BID"]:
         if not payload.get("keyword_id"):
             reasons.append("Bid action is missing keyword_id.")
 
@@ -323,6 +324,9 @@ def _mission_for_plan(actions, objective=None):
     if "REDUCE_BID" in action_types:
         return "Improve ACOS by reducing bids on inefficient but active targets."
 
+    if "INCREASE_BID" in action_types:
+        return "Scale efficient search terms with controlled bid increases."
+
     return "Improve Amazon Ads performance with controlled, approval-based optimization."
 
 
@@ -339,6 +343,9 @@ def _success_metrics(actions):
 
     if "REDUCE_BID" in action_types:
         metrics.extend(["CPC", "Target ACOS"])
+
+    if "INCREASE_BID" in action_types:
+        metrics.extend(["CPC", "Incremental Sales", "Target ACOS"])
 
     return list(dict.fromkeys(metrics))
 
