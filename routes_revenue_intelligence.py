@@ -62,7 +62,7 @@ def business_os_revenue_paid_vs_organic(
     x_api_key: str = Header(...),
 ):
     verify_key(x_api_key)
-    return RevenueIntelligenceEngine.paid_vs_organic(window=window, country_code=country_code, profile_id=profile_id)
+    return RevenueReconciliationService.organic_vs_paid(window=window, country_code=country_code, profile_id=profile_id)
 
 
 @router.get("/revenue/organic-vs-paid")
@@ -70,10 +70,11 @@ def business_os_revenue_organic_vs_paid(
     window: str = "latest",
     country_code: str | None = None,
     profile_id: str | None = None,
+    debug: bool = False,
     x_api_key: str = Header(...),
 ):
     verify_key(x_api_key)
-    return RevenueReconciliationService.organic_vs_paid(window=window, country_code=country_code, profile_id=profile_id)
+    return RevenueReconciliationService.organic_vs_paid(window=window, country_code=country_code, profile_id=profile_id, debug=debug)
 
 
 @router.get("/revenue/reconciliation")
@@ -81,20 +82,11 @@ def business_os_revenue_reconciliation(
     window: str = "latest",
     country_code: str | None = None,
     profile_id: str | None = None,
+    debug: bool = False,
     x_api_key: str = Header(...),
 ):
     verify_key(x_api_key)
-    return RevenueReconciliationService.organic_vs_paid(window=window, country_code=country_code, profile_id=profile_id)
-
-
-@router.get("/revenue/data-health")
-def business_os_revenue_data_health(
-    country_code: str | None = None,
-    profile_id: str | None = None,
-    x_api_key: str = Header(...),
-):
-    verify_key(x_api_key)
-    return RevenueReconciliationService.data_health(country_code=country_code, profile_id=profile_id)
+    return RevenueReconciliationService.organic_vs_paid(window=window, country_code=country_code, profile_id=profile_id, debug=debug)
 
 
 @router.get("/revenue/executive-snapshot")
@@ -106,3 +98,13 @@ def business_os_revenue_executive_snapshot(
 ):
     verify_key(x_api_key)
     return RevenueReconciliationService.executive_snapshot(window=window, country_code=country_code, profile_id=profile_id)
+
+
+@router.get("/revenue/data-health")
+def business_os_revenue_data_health(
+    country_code: str | None = None,
+    profile_id: str | None = None,
+    x_api_key: str = Header(...),
+):
+    verify_key(x_api_key)
+    return RevenueReconciliationService.data_health(country_code=country_code, profile_id=profile_id)
