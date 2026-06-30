@@ -52,6 +52,21 @@ def business_os_sp_api_pipeline_diagnostics(x_api_key: str = Header(...)):
     return SPAPIReportPipelineService.diagnostics()
 
 
+@router.get("/sp-api/pipeline/status")
+def business_os_sp_api_pipeline_status(x_api_key: str = Header(...)):
+    verify_key(x_api_key)
+    return SPAPIReportPipelineService.summarize_jobs()
+
+
+@router.get("/sp-api/pipeline/quota")
+def business_os_sp_api_pipeline_quota(
+    minutes: int = 60,
+    x_api_key: str = Header(...),
+):
+    verify_key(x_api_key)
+    return SPAPIReportPipelineService.recent_quota_limited_marketplaces(minutes=minutes)
+
+
 @router.get("/sp-api/pipeline/jobs")
 def business_os_sp_api_pipeline_jobs(
     limit: int = 25,
@@ -277,6 +292,9 @@ def business_os_sp_api_automation_request_yesterday(
     date: str | None = None,
     asin_granularity: str = "CHILD",
     date_granularity: str = "DAY",
+    respect_quota: bool = True,
+    quota_backoff_minutes: int = 60,
+    max_marketplaces_per_run: int | None = None,
     x_api_key: str = Header(...),
 ):
     verify_key(x_api_key)
@@ -285,6 +303,9 @@ def business_os_sp_api_automation_request_yesterday(
         date=date,
         asin_granularity=asin_granularity,
         date_granularity=date_granularity,
+        respect_quota=respect_quota,
+        quota_backoff_minutes=quota_backoff_minutes,
+        max_marketplaces_per_run=max_marketplaces_per_run,
     )
 
 
@@ -295,6 +316,16 @@ def business_os_sp_api_automation_collect_open_jobs(
 ):
     verify_key(x_api_key)
     return SellerCentralAutomationService.collect_open_jobs(limit=limit)
+
+
+@router.post("/sp-api/automation/open-jobs/collect-until-idle")
+def business_os_sp_api_automation_collect_until_idle(
+    limit: int = 25,
+    max_rounds: int = 3,
+    x_api_key: str = Header(...),
+):
+    verify_key(x_api_key)
+    return SellerCentralAutomationService.collect_until_idle(limit=limit, max_rounds=max_rounds)
 
 
 @router.post("/sp-api/automation/nightly/run")

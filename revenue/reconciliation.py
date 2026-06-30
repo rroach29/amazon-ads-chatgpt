@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from database import SessionLocal
+from models import SPAPIReportJob, SellerCentralSalesTraffic
 from revenue.engine import RevenueIntelligenceEngine
 
 
 class RevenueReconciliationService:
-    version = "9.0"
+    version = "9.0.1"
 
     @staticmethod
     def organic_vs_paid(window: str = "latest", country_code: str | None = None, profile_id: str | None = None) -> dict[str, Any]:
@@ -25,6 +27,7 @@ class RevenueReconciliationService:
             "version": RevenueReconciliationService.version,
             "data_context": marketplaces.get("data_context") if isinstance(marketplaces, dict) else None,
             "seller_central_data_status": seller_status,
+            "seller_central_pipeline_status": RevenueReconciliationService._seller_pipeline_status(),
             "summary": {
                 "total_revenue": round(total, 2),
                 "paid_revenue": round(paid, 2),
@@ -35,6 +38,7 @@ class RevenueReconciliationService:
                 "tacos": RevenueReconciliationService._ratio(ad_spend, total),
                 "advertising_dependency": RevenueReconciliationService._dependency_label(paid, total),
                 "confidence": combined.get("confidence"),
+                "confidence_reason": RevenueReconciliationService._confidence_reason(seller_status),
             },
             "marketplaces": marketplaces.get("marketplaces", []) if isinstance(marketplaces, dict) else [],
             "products": products.get("products", []) if isinstance(products, dict) else [],
@@ -54,6 +58,57 @@ class RevenueReconciliationService:
             "kpis": summary,
             "priority_signals": RevenueReconciliationService._priority_signals(data),
             "next_actions": RevenueReconciliationService._next_actions(data),
+        }
+
+
+    @staticmethod
+    def _seller_pipeline_status() -> dict[str, Any]:
+        db = SessionLocal()
+        try:
+            seller_rows = db.query(SellerCentralSalesTraffic).count()
+            open_jobs = (
+                db.query(SPAPIReportJob)
+                .filter(SPAPIReportJob.report_type == "GET_SALES_AND_TRAFFIC_REPORT")
+                .filter(SPAPIReportJob.status.in_(["REQUESTED", "PROCESSING", "DONE"]))
+                .count()
+            )
+            collected_jobs = db.query(SPAPIReportJob).filter(SPAPIReportJob.status == "COLLECTED").count()
+            latest_job = db.query(SPAPIReportJob).order_by(SPAPIReportJob.created_at.desc()).first()
+            return {
+                "seller_central_sales_traffic_rows": seller_rows,
+                "open_sales_traffic_jobs": open_jobs,
+                "collected_sales_traffic_jobs": collected_jobs,
+                "latest_job_status": latest_job.status if latest_job else None,
+                "latest_job_processing_status": latest_job.processing_status if latest_job else None,
+                "latest_job_marketplace": latest_job.marketplace if latest_job else None,
+            }
+        except Exception as exc:
+            return {"status": "ERROR", "message": str(exc)}
+        finally:
+            db.close()
+
+    @staticmethod
+    def _confidence_reason(seller_status: str | None) -> dict[str, Any]:
+        pipeline = RevenueReconciliationService._seller_pipeline_status()
+        if seller_status != "AWAITING_SELLER_CENTRAL_DATA":
+            return {
+                "level": "HIGH",
+                "reason": "Seller Central Sales & Traffic rows are available for reconciliation.",
+                "pipeline": pipeline,
+            }
+        open_jobs = pipeline.get("open_sales_traffic_jobs", 0) or 0
+        collected = pipeline.get("collected_sales_traffic_jobs", 0) or 0
+        if open_jobs:
+            reason = "Seller Central report has been requested and is still processing at Amazon."
+        elif collected:
+            reason = "Seller Central data exists, but not for the selected data context/window."
+        else:
+            reason = "No Seller Central Sales & Traffic rows are available yet."
+        return {
+            "level": "LOW",
+            "reason": reason,
+            "pipeline": pipeline,
+            "recommended_action": "Collect open SP-API jobs or request a Sales & Traffic report for the selected window.",
         }
 
     @staticmethod
@@ -76,7 +131,7 @@ class RevenueReconciliationService:
     @staticmethod
     def _next_actions(data: dict[str, Any]) -> list[str]:
         if data.get("status") == "AWAITING_SELLER_CENTRAL_DATA":
-            return ["Run POST /business-os/sp-api/automation/nightly/run", "Then recheck GET /business-os/revenue/organic-vs-paid"]
+            return ["Run POST /business-os/sp-api/automation/open-jobs/collect", "If no jobs are open, run POST /business-os/sp-api/automation/nightly/run", "Then recheck GET /business-os/revenue/organic-vs-paid"]
         return [
             "Compare organic ratio against paid ratio in Mission Control.",
             "Review most ad-dependent products before increasing budgets.",

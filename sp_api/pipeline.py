@@ -13,7 +13,7 @@ report pipeline:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from database import SessionLocal
@@ -23,7 +23,7 @@ from sp_api.sales_traffic import SalesTrafficIngestionService
 
 
 class SPAPIReportPipelineService:
-    version = "8.9"
+    version = "9.0.1"
 
     @staticmethod
     def diagnostics() -> dict[str, Any]:
@@ -51,6 +51,8 @@ class SPAPIReportPipelineService:
                     "download_report_document",
                     "ingest_sales_traffic_rows",
                     "persistent_job_history",
+                    "quota_aware_request_status",
+                    "confidence_reasoning_support",
                 ],
             }
         except Exception as exc:
@@ -85,7 +87,7 @@ class SPAPIReportPipelineService:
             job = SPAPIReportJob(
                 report_type="GET_SALES_AND_TRAFFIC_REPORT",
                 requested_at=SPAPIReportPipelineService._now(),
-                status="REQUESTED" if requested.get("status") == "OK" else "ERROR",
+                status=SPAPIReportPipelineService._initial_status_for_request(requested),
                 marketplace=normalized_marketplace,
                 marketplace_id=resolved_marketplace_id,
                 country_code=(country_code or normalized_marketplace or "").upper() or None,
@@ -119,7 +121,7 @@ class SPAPIReportPipelineService:
                 "status": job.status,
                 "version": SPAPIReportPipelineService.version,
                 "job": SPAPIReportPipelineService._job_to_dict(job),
-                "next_step": "Poll the job until DONE, then collect it.",
+                "next_step": SPAPIReportPipelineService._next_step_for_job(job),
             }
         except Exception as exc:
             db.rollback()
@@ -296,6 +298,109 @@ class SPAPIReportPipelineService:
             "polled": polled,
             "next_step": f"Report is asynchronous. Run POST /business-os/sp-api/pipeline/jobs/{job_id}/collect after Amazon marks it DONE.",
         }
+
+    @staticmethod
+    def summarize_jobs() -> dict[str, Any]:
+        """Return a compact operational view of SP-API report jobs."""
+        db = SessionLocal()
+        try:
+            statuses = ["REQUESTED", "PROCESSING", "DONE", "COLLECTED", "ERROR", "QUOTA_LIMITED"]
+            counts = {status: db.query(SPAPIReportJob).filter(SPAPIReportJob.status == status).count() for status in statuses}
+            latest_by_marketplace = {}
+            for marketplace in ("US", "CA", "MX"):
+                row = (
+                    db.query(SPAPIReportJob)
+                    .filter(SPAPIReportJob.marketplace == marketplace)
+                    .order_by(SPAPIReportJob.created_at.desc())
+                    .first()
+                )
+                latest_by_marketplace[marketplace] = SPAPIReportPipelineService._job_to_dict(row) if row else None
+            return {
+                "status": "OK",
+                "version": SPAPIReportPipelineService.version,
+                "counts": counts,
+                "latest_by_marketplace": latest_by_marketplace,
+                "next_step": SPAPIReportPipelineService._operational_next_step(counts),
+            }
+        finally:
+            db.close()
+
+    @staticmethod
+    def recent_quota_limited_marketplaces(minutes: int = 60) -> dict[str, Any]:
+        """Identify marketplaces that should be skipped temporarily after a 429."""
+        cutoff = SPAPIReportPipelineService._now() - timedelta(minutes=max(1, minutes))
+        db = SessionLocal()
+        try:
+            rows = (
+                db.query(SPAPIReportJob)
+                .filter(SPAPIReportJob.report_type == "GET_SALES_AND_TRAFFIC_REPORT")
+                .filter(SPAPIReportJob.status.in_(["QUOTA_LIMITED", "ERROR"]))
+                .filter(SPAPIReportJob.updated_at >= cutoff)
+                .order_by(SPAPIReportJob.updated_at.desc())
+                .all()
+            )
+            items = []
+            marketplaces = set()
+            for row in rows:
+                message = row.error_message or ""
+                response = row.response_payload or {}
+                if SPAPIReportPipelineService._is_quota_error(response) or "QuotaExceeded" in message or "429" in message:
+                    marketplace = row.marketplace or row.country_code
+                    if marketplace:
+                        marketplaces.add(str(marketplace).upper())
+                    items.append(SPAPIReportPipelineService._job_to_dict(row))
+            return {
+                "status": "OK",
+                "version": SPAPIReportPipelineService.version,
+                "window_minutes": minutes,
+                "marketplaces": sorted(marketplaces),
+                "count": len(items),
+                "items": items,
+                "next_step": "Wait before requesting these marketplaces again; continue collecting already-requested jobs.",
+            }
+        finally:
+            db.close()
+
+    @staticmethod
+    def _initial_status_for_request(requested: dict[str, Any]) -> str:
+        if requested.get("status") == "OK":
+            return "REQUESTED"
+        if SPAPIReportPipelineService._is_quota_error(requested):
+            return "QUOTA_LIMITED"
+        return "ERROR"
+
+    @staticmethod
+    def _is_quota_error(payload: dict[str, Any] | None) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        if payload.get("http_status") == 429:
+            return True
+        text = str(payload.get("message") or payload.get("error") or payload)
+        return "QuotaExceeded" in text or "quota" in text.lower() or "429" in text
+
+    @staticmethod
+    def _next_step_for_job(job: SPAPIReportJob) -> str:
+        if job.status == "QUOTA_LIMITED":
+            return "Amazon rate-limited this request. Wait before retrying this marketplace, but keep collecting existing jobs."
+        if job.status == "REQUESTED":
+            return "Poll the job until DONE, then collect it."
+        if job.status == "PROCESSING":
+            return "Amazon is still generating the report. Run collect-open-jobs again later."
+        if job.status == "DONE":
+            return "Report is ready. Run collect to download and ingest it."
+        if job.status == "COLLECTED":
+            return "Report has been ingested into seller_central_sales_traffic."
+        return "Inspect error_message and response_payload."
+
+    @staticmethod
+    def _operational_next_step(counts: dict[str, int]) -> str:
+        if counts.get("DONE", 0):
+            return "Collect DONE reports now."
+        if counts.get("REQUESTED", 0) or counts.get("PROCESSING", 0):
+            return "Run collect-open-jobs again later; Amazon report generation is asynchronous."
+        if counts.get("QUOTA_LIMITED", 0):
+            return "Wait for Amazon quota to reset before requesting more reports."
+        return "No open jobs. Request a new Sales & Traffic report when ready."
 
     @staticmethod
     def _job_to_dict(job: SPAPIReportJob | None) -> dict[str, Any] | None:
