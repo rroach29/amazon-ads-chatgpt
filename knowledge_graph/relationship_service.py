@@ -198,7 +198,8 @@ class RelationshipService:
             decisions = decisions.order_by(DecisionHistory.created_at.desc()).limit(limit).all()
             for row in decisions:
                 payload = row.payload if isinstance(row.payload, dict) else {}
-                raw = row.raw if isinstance(row.raw, dict) else {}
+                raw = getattr(row, "raw", None)
+                raw = raw if isinstance(raw, dict) else {}
                 campaign_ref = payload.get("campaign_id") or raw.get("campaign_id")
                 if not campaign_ref:
                     continue
