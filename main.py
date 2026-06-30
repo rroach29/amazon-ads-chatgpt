@@ -69,6 +69,7 @@ app.include_router(data_context_router, prefix="/business-os", tags=["Business O
 app.include_router(analytics_health_router, prefix="/business-os", tags=["Business OS Analytics Health"])
 app.include_router(business_plans_router, prefix="/business-os", tags=["Business OS Plans"])
 app.include_router(mission_control_router, prefix="/business-os", tags=["Business OS Mission Control"])
+app.include_router(optimization_router, prefix="/business-os", tags=["Business OS Optimization Platform"])
 
 
 @app.get("/")
