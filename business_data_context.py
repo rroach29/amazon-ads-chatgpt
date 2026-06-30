@@ -1,17 +1,20 @@
 """
-Business OS v4.0.0
-Unified Data Context
+Business OS v5.0.2
+Data Context Source-of-Truth Fix
 
-One source of truth for "what reporting window are we analyzing?"
+Fix:
+- resolve_data_context(window="latest") now uses dashboard.get_latest_dashboard()
+  instead of duplicating SQL against DailyDashboard.
+- This ensures the Data Context and Dashboard endpoints agree on the latest
+  reporting date.
 
-This prevents Morning Brief, Dashboard, Decisions, Winners, Trends, and Forecasts
-from silently using different dates or mixed historical windows.
+Why:
+The dashboard endpoint could return a valid latest dashboard date while
+business_data_context returned NO_DATA. That meant Business Plans and Mission
+Control had a null planning window.
 """
 
 from datetime import date, timedelta
-
-from database import SessionLocal
-from models import DailyDashboard
 
 
 VALID_WINDOWS = {
@@ -24,27 +27,79 @@ VALID_WINDOWS = {
 
 
 def _serialize_date(value):
-    return value.isoformat() if value else None
+    if not value:
+        return None
+
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+
+    return str(value)
+
+
+def _parse_date(value):
+    if not value:
+        return None
+
+    if isinstance(value, date):
+        return value
+
+    return date.fromisoformat(str(value))
 
 
 def get_latest_dashboard_date(country_code=None, profile_id=None):
-    db = SessionLocal()
+    """
+    Single source of truth for latest reporting date.
 
+    Do not query DailyDashboard directly here. dashboard.get_latest_dashboard()
+    already contains the app's working marketplace/latest-date lookup logic.
+    """
     try:
-        query = db.query(DailyDashboard.date).filter(DailyDashboard.channel == "amazon_ads")
+        from dashboard import get_latest_dashboard
 
-        if country_code:
-            query = query.filter(DailyDashboard.country_code == country_code)
+        dashboard = get_latest_dashboard(
+            country_code=country_code,
+            profile_id=profile_id,
+        )
 
-        if profile_id:
-            query = query.filter(DailyDashboard.profile_id == profile_id)
+        if isinstance(dashboard, dict) and dashboard.get("status") == "OK":
+            return _parse_date(dashboard.get("date"))
 
-        latest = query.order_by(DailyDashboard.date.desc()).first()
+    except Exception:
+        # Fallback only for import-cycle or unexpected runtime issues.
+        pass
 
-        return latest[0] if latest else None
+    # Conservative fallback: direct DB query with normalized country code.
+    try:
+        from database import SessionLocal
+        from models import DailyDashboard
 
-    finally:
-        db.close()
+        db = SessionLocal()
+
+        try:
+            query = db.query(DailyDashboard.date)
+
+            # Some older rows may not have channel consistently populated.
+            if hasattr(DailyDashboard, "channel"):
+                query = query.filter(
+                    (DailyDashboard.channel == "amazon_ads") |
+                    (DailyDashboard.channel.is_(None))
+                )
+
+            if country_code and hasattr(DailyDashboard, "country_code"):
+                query = query.filter(DailyDashboard.country_code == str(country_code).upper())
+
+            if profile_id and hasattr(DailyDashboard, "profile_id"):
+                query = query.filter(DailyDashboard.profile_id == str(profile_id))
+
+            latest = query.order_by(DailyDashboard.date.desc()).first()
+
+            return latest[0] if latest else None
+
+        finally:
+            db.close()
+
+    except Exception:
+        return None
 
 
 def resolve_data_context(
@@ -55,18 +110,20 @@ def resolve_data_context(
     end_date=None,
 ):
     """
-    Returns a normalized context dict for all analytics modules.
+    Returns a normalized data context for all analytics modules.
 
     window:
-    - latest: latest completed dashboard date
+    - latest: latest dashboard date from dashboard.get_latest_dashboard()
     - yesterday: calendar yesterday
-    - last_7_days / last_14_days / last_30_days
-    - custom: use explicit start_date/end_date
+    - last_7_days / last_14_days / last_30_days: ending on latest dashboard date
+    - custom: explicit start_date/end_date
     """
 
+    normalized_country_code = str(country_code).upper() if country_code else None
+
     if start_date and end_date:
-        resolved_start = date.fromisoformat(str(start_date))
-        resolved_end = date.fromisoformat(str(end_date))
+        resolved_start = _parse_date(start_date)
+        resolved_end = _parse_date(end_date)
         resolved_window = "custom"
     else:
         resolved_window = window or "latest"
@@ -75,7 +132,10 @@ def resolve_data_context(
             resolved_window = "latest"
 
         if resolved_window == "latest":
-            latest = get_latest_dashboard_date(country_code=country_code, profile_id=profile_id)
+            latest = get_latest_dashboard_date(
+                country_code=normalized_country_code,
+                profile_id=profile_id,
+            )
             resolved_start = latest
             resolved_end = latest
 
@@ -90,7 +150,10 @@ def resolve_data_context(
                 "last_30_days": 30,
             }[resolved_window]
 
-            latest = get_latest_dashboard_date(country_code=country_code, profile_id=profile_id)
+            latest = get_latest_dashboard_date(
+                country_code=normalized_country_code,
+                profile_id=profile_id,
+            )
             resolved_end = latest or (date.today() - timedelta(days=1))
             resolved_start = resolved_end - timedelta(days=days - 1)
 
@@ -99,10 +162,10 @@ def resolve_data_context(
         "window": resolved_window,
         "start_date": _serialize_date(resolved_start),
         "end_date": _serialize_date(resolved_end),
-        "country_code": country_code,
-        "profile_id": profile_id,
+        "country_code": normalized_country_code,
+        "profile_id": str(profile_id) if profile_id else None,
         "channel": "amazon_ads",
-        "source_of_truth": "DailyDashboard.latest_completed_date",
+        "source_of_truth": "dashboard.get_latest_dashboard",
     }
 
 
@@ -136,10 +199,10 @@ def apply_marketplace_context(query, model, context):
     profile_id = context.get("profile_id")
 
     if country_code and hasattr(model, "country_code"):
-        query = query.filter(model.country_code == country_code)
+        query = query.filter(model.country_code == str(country_code).upper())
 
     if profile_id and hasattr(model, "profile_id"):
-        query = query.filter(model.profile_id == profile_id)
+        query = query.filter(model.profile_id == str(profile_id))
 
     return query
 
