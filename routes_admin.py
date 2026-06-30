@@ -5,6 +5,7 @@ from admin_migrations import (
     get_database_schema,
     get_database_version,
     migrate_v3_4_1_execution_framework,
+    migrate_v7_0_business_knowledge_graph,
 )
 
 router = APIRouter()
@@ -26,3 +27,9 @@ def admin_database_version(x_api_key: str = Header(...)):
 def admin_migrate_v3_4_1(x_api_key: str = Header(...)):
     verify_key(x_api_key)
     return migrate_v3_4_1_execution_framework()
+
+
+@router.post("/migrate/v7.0")
+def admin_migrate_v7_0(x_api_key: str = Header(...)):
+    verify_key(x_api_key)
+    return migrate_v7_0_business_knowledge_graph()

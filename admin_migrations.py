@@ -67,6 +67,39 @@ CREATE INDEX IF NOT EXISTS ix_execution_results_action ON execution_results(acti
 """
 
 
+MIGRATION_V7_0_SQL = """
+CREATE TABLE IF NOT EXISTS business_graph_nodes (
+    id SERIAL PRIMARY KEY,
+    node_key VARCHAR(255) UNIQUE NOT NULL,
+    node_type VARCHAR(80) NOT NULL,
+    label VARCHAR(255) NOT NULL,
+    source VARCHAR(80) DEFAULT 'business_os',
+    attributes JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_business_graph_nodes_type ON business_graph_nodes(node_type);
+CREATE INDEX IF NOT EXISTS idx_business_graph_nodes_source ON business_graph_nodes(source);
+
+CREATE TABLE IF NOT EXISTS business_graph_edges (
+    id SERIAL PRIMARY KEY,
+    source_node_key VARCHAR(255) NOT NULL,
+    target_node_key VARCHAR(255) NOT NULL,
+    relationship VARCHAR(100) NOT NULL,
+    weight DOUBLE PRECISION DEFAULT 1.0,
+    evidence JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source_node_key, target_node_key, relationship)
+);
+
+CREATE INDEX IF NOT EXISTS idx_business_graph_edges_source ON business_graph_edges(source_node_key);
+CREATE INDEX IF NOT EXISTS idx_business_graph_edges_target ON business_graph_edges(target_node_key);
+CREATE INDEX IF NOT EXISTS idx_business_graph_edges_relationship ON business_graph_edges(relationship);
+"""
+
+
 def _row_to_dict(row):
     data = dict(row._mapping)
     for key, value in list(data.items()):
@@ -209,3 +242,59 @@ def migrate_v3_4_1_execution_framework():
         }
     finally:
         db.close()
+
+def migrate_v7_0_business_knowledge_graph():
+    db = SessionLocal()
+    try:
+        ensure_schema_migrations_table(db)
+
+        existing = db.execute(
+            text("SELECT version FROM schema_migrations WHERE version = 'v7.0';")
+        ).fetchone()
+
+        if existing:
+            return {
+                "status": "SKIPPED",
+                "message": "Migration v7.0 has already been applied.",
+                "version": "v7.0",
+            }
+
+        db.execute(text(MIGRATION_V7_0_SQL))
+        db.execute(
+            text(
+                """
+                INSERT INTO schema_migrations (version, name, status, applied_at, details)
+                VALUES (
+                    'v7.0',
+                    'Business Knowledge Graph',
+                    'APPLIED',
+                    NOW(),
+                    '{
+                      "tables": ["business_graph_nodes", "business_graph_edges"],
+                      "mode": "optional_persistence",
+                      "routes_can_run_without_persistence": true
+                    }'::JSONB
+                )
+                ON CONFLICT (version) DO NOTHING;
+                """
+            )
+        )
+        db.commit()
+
+        return {
+            "status": "OK",
+            "message": "Migration v7.0 applied successfully.",
+            "version": "v7.0",
+            "tables": ["business_graph_nodes", "business_graph_edges"],
+        }
+
+    except Exception as exc:
+        db.rollback()
+        return {
+            "status": "ERROR",
+            "message": "Migration v7.0 failed.",
+            "error": str(exc),
+        }
+    finally:
+        db.close()
+
