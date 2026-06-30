@@ -33,7 +33,9 @@ def get_pause_campaign_decisions(min_spend=25, min_clicks=20, limit=20):
         rows = (
             db.query(CampaignDailyDetail)
             .filter(CampaignDailyDetail.channel == "amazon_ads")
-            .filter(CampaignDailyDetail.spend >= min_spend)
+.filter(CampaignDailyDetail.profile_id.isnot(None))
+.filter(CampaignDailyDetail.country_code.isnot(None))
+.filter(CampaignDailyDetail.spend >= min_spend)
             .filter(CampaignDailyDetail.clicks >= min_clicks)
             .filter(CampaignDailyDetail.sales == 0)
             .order_by(CampaignDailyDetail.spend.desc())
@@ -67,15 +69,19 @@ def get_pause_campaign_decisions(min_spend=25, min_clicks=20, limit=20):
                     ],
                     recommended_action=f"Pause campaign: {row.campaign_name}",
                     payload={
-                        "campaign_id": row.campaign_id,
-                        "campaign_name": row.campaign_name,
-                        "spend": spend,
-                        "clicks": clicks,
-                        "sales": sales,
-                        "orders": safe_int(row.orders),
-                        "acos": row.acos,
-                        "roas": row.roas,
-                    },
+    "campaign_id": str(row.campaign_id),
+    "campaign_name": row.campaign_name,
+    "profile_id": row.profile_id,
+    "country_code": row.country_code,
+    "marketplace": row.marketplace,
+    "currency": row.currency,
+    "spend": spend,
+    "clicks": clicks,
+    "sales": sales,
+    "orders": safe_int(row.orders),
+    "acos": row.acos,
+    "roas": row.roas,
+},
                 )
             )
 
