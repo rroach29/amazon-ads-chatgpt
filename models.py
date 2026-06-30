@@ -265,3 +265,40 @@ class DecisionHistory(Base):
     was_correct = Column(Boolean, nullable=True)
 
     notes = Column(Text, nullable=True)
+
+
+
+class SellerCentralSalesTraffic(Base):
+    """Seller Central Sales & Traffic rows for Revenue Intelligence.
+
+    Intended source: SP-API GET_SALES_AND_TRAFFIC_REPORT. Rows may be ASIN/SKU,
+    marketplace, and date granular. This table lets Business OS reconcile total
+    Seller Central revenue with Amazon Ads paid attributed revenue.
+    """
+
+    __tablename__ = "seller_central_sales_traffic"
+
+    id = Column(Integer, primary_key=True, index=True)
+    date = Column(Date, index=True)
+    channel = Column(String, index=True, default="amazon")
+
+    profile_id = Column(String, index=True, nullable=True)
+    country_code = Column(String, index=True, nullable=True)
+    marketplace = Column(String, index=True, nullable=True)
+    currency = Column(String, nullable=True)
+
+    asin = Column(String, index=True, nullable=True)
+    sku = Column(String, index=True, nullable=True)
+    title = Column(String, nullable=True)
+
+    ordered_product_sales = Column(Float, default=0)
+    units_ordered = Column(Integer, default=0)
+    total_order_items = Column(Integer, default=0)
+    sessions = Column(Integer, default=0)
+    page_views = Column(Integer, default=0)
+    buy_box_percentage = Column(Float, nullable=True)
+    unit_session_percentage = Column(Float, nullable=True)
+
+    report_type = Column(String, default="GET_SALES_AND_TRAFFIC_REPORT")
+    raw = Column(JSON)
+    created_at = Column(DateTime, default=datetime.utcnow)

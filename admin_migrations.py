@@ -100,6 +100,39 @@ CREATE INDEX IF NOT EXISTS idx_business_graph_edges_relationship ON business_gra
 """
 
 
+MIGRATION_V8_6_SQL = """
+CREATE TABLE IF NOT EXISTS seller_central_sales_traffic (
+    id SERIAL PRIMARY KEY,
+    date DATE,
+    channel VARCHAR(100) DEFAULT 'amazon',
+    profile_id VARCHAR(100),
+    country_code VARCHAR(10),
+    marketplace VARCHAR(100),
+    currency VARCHAR(10),
+    asin VARCHAR(50),
+    sku VARCHAR(100),
+    title VARCHAR(500),
+    ordered_product_sales DOUBLE PRECISION DEFAULT 0,
+    units_ordered INTEGER DEFAULT 0,
+    total_order_items INTEGER DEFAULT 0,
+    sessions INTEGER DEFAULT 0,
+    page_views INTEGER DEFAULT 0,
+    buy_box_percentage DOUBLE PRECISION,
+    unit_session_percentage DOUBLE PRECISION,
+    report_type VARCHAR(100) DEFAULT 'GET_SALES_AND_TRAFFIC_REPORT',
+    raw JSONB,
+    created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ix_seller_central_sales_traffic_date ON seller_central_sales_traffic(date);
+CREATE INDEX IF NOT EXISTS ix_seller_central_sales_traffic_country_code ON seller_central_sales_traffic(country_code);
+CREATE INDEX IF NOT EXISTS ix_seller_central_sales_traffic_profile_id ON seller_central_sales_traffic(profile_id);
+CREATE INDEX IF NOT EXISTS ix_seller_central_sales_traffic_marketplace ON seller_central_sales_traffic(marketplace);
+CREATE INDEX IF NOT EXISTS ix_seller_central_sales_traffic_asin ON seller_central_sales_traffic(asin);
+CREATE INDEX IF NOT EXISTS ix_seller_central_sales_traffic_sku ON seller_central_sales_traffic(sku);
+"""
+
+
 def _row_to_dict(row):
     data = dict(row._mapping)
     for key, value in list(data.items()):
@@ -298,3 +331,60 @@ def migrate_v7_0_business_knowledge_graph():
     finally:
         db.close()
 
+
+
+
+def migrate_v8_6_revenue_intelligence():
+    db = SessionLocal()
+    try:
+        ensure_schema_migrations_table(db)
+
+        existing = db.execute(
+            text("SELECT version FROM schema_migrations WHERE version = 'v8.6';")
+        ).fetchone()
+
+        if existing:
+            return {
+                "status": "SKIPPED",
+                "message": "Migration v8.6 has already been applied.",
+                "version": "v8.6",
+            }
+
+        db.execute(text(MIGRATION_V8_6_SQL))
+        db.execute(
+            text(
+                """
+                INSERT INTO schema_migrations (version, name, status, applied_at, details)
+                VALUES (
+                    'v8.6',
+                    'Revenue Intelligence',
+                    'APPLIED',
+                    NOW(),
+                    '{
+                      "tables": ["seller_central_sales_traffic"],
+                      "source": "SP-API GET_SALES_AND_TRAFFIC_REPORT",
+                      "organic_formula": "organic_revenue = total_revenue - paid_attributed_revenue"
+                    }'::JSONB
+                )
+                ON CONFLICT (version) DO NOTHING;
+                """
+            )
+        )
+        db.commit()
+
+        return {
+            "status": "OK",
+            "message": "Migration v8.6 applied successfully.",
+            "version": "v8.6",
+            "tables": ["seller_central_sales_traffic"],
+        }
+
+    except Exception as exc:
+        db.rollback()
+        return {
+            "status": "ERROR",
+            "message": "Migration v8.6 failed.",
+            "error": str(exc),
+        }
+    finally:
+        db.close()
