@@ -35,6 +35,7 @@ from routes_business_plans import router as business_plans_router
 from routes_mission_control import router as mission_control_router
 from routes_optimization import router as optimization_router
 from routes_outcomes import router as outcomes_router
+from routes_knowledge_graph import router as knowledge_graph_router
 
 
 app = FastAPI(title="Business OS API")
@@ -72,6 +73,7 @@ app.include_router(business_plans_router, prefix="/business-os", tags=["Business
 app.include_router(mission_control_router, prefix="/business-os", tags=["Business OS Mission Control"])
 app.include_router(optimization_router, prefix="/business-os", tags=["Business OS Optimization Platform"])
 app.include_router(outcomes_router, prefix="/business-os", tags=["Business OS Outcome Intelligence"])
+app.include_router(knowledge_graph_router, prefix="/business-os", tags=["Business OS Knowledge Graph"])
 
 
 @app.get("/")
