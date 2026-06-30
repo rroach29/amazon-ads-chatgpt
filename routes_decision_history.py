@@ -3,6 +3,7 @@ from fastapi import APIRouter, Header
 from auth import verify_key
 from decision_history import (
     get_decision_history,
+    get_decision,
     evaluate_decision,
 )
 
@@ -17,6 +18,15 @@ def decision_history(
 ):
     verify_key(x_api_key)
     return get_decision_history(status, limit)
+
+
+@router.get("/{decision_id}")
+def decision_history_item(
+    decision_id: int,
+    x_api_key: str = Header(...),
+):
+    verify_key(x_api_key)
+    return get_decision(decision_id)
 
 
 @router.post("/{decision_id}/evaluate")

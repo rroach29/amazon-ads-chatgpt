@@ -9,6 +9,7 @@ Supported live actions:
 - INCREASE_BUDGET
 - DECREASE_BUDGET
 - REDUCE_BID
+- INCREASE_BID
 
 Bid management in v3.8.0:
 - Fetches current live keyword bid from Amazon before bid changes.
@@ -503,11 +504,12 @@ def _resolve_bid(payload, mode, live_current_bid=None):
             "percentage",
             "reduce_percent",
             "reduction_percent",
+            "increase_percent",
+            "increasePercent",
             "decrease_percent",
             "change_percent",
             "suggested_bid_reduction_percent",
             "suggestedBidReductionPercent",
-            "increase_percent",
             "suggested_bid_increase_percent",
             "suggestedBidIncreasePercent",
         )
@@ -692,7 +694,7 @@ def set_budget(profile_id, country_code, payload, dry_run=True, action="SET_BUDG
     return result
 
 
-def change_bid(profile_id, country_code, payload, dry_run=True, action="REDUCE_BID"):
+def reduce_bid(profile_id, country_code, payload, dry_run=True):
     keyword_id = _get_keyword_id(payload)
 
     live_keyword_result = get_keyword_live(
@@ -707,7 +709,7 @@ def change_bid(profile_id, country_code, payload, dry_run=True, action="REDUCE_B
             "dry_run": dry_run,
             "http_status": live_keyword_result.get("http_status"),
             "amazon_request_id": live_keyword_result.get("amazon_request_id"),
-            "action": action,
+            "action": "REDUCE_BID",
             "keyword_id": keyword_id,
             "response_json": live_keyword_result,
             "error_message": live_keyword_result.get("error_message"),
@@ -715,7 +717,7 @@ def change_bid(profile_id, country_code, payload, dry_run=True, action="REDUCE_B
 
     live_keyword = live_keyword_result.get("keyword")
     current_bid = _extract_bid_from_keyword(live_keyword)
-    new_bid = _resolve_bid(payload, action, live_current_bid=current_bid)
+    new_bid = _resolve_bid(payload, "REDUCE_BID", live_current_bid=current_bid)
 
     validation_errors, validation_warnings = _validate_bid_change(
         current_bid=current_bid,
@@ -726,7 +728,7 @@ def change_bid(profile_id, country_code, payload, dry_run=True, action="REDUCE_B
         return {
             "success": False,
             "dry_run": dry_run,
-            "action": action,
+            "action": "REDUCE_BID",
             "keyword_id": keyword_id,
             "current_bid": current_bid,
             "new_bid": new_bid,
@@ -767,11 +769,11 @@ def change_bid(profile_id, country_code, payload, dry_run=True, action="REDUCE_B
     }
 
     if dry_run:
-        return _dry_run_result(action, profile_id, country_code, keyword_id, update_payload, extra=bid_audit)
+        return _dry_run_result("REDUCE_BID", profile_id, country_code, keyword_id, update_payload, extra=bid_audit)
 
     result = _send_keyword_update(profile_id, country_code, update_payload)
     result.update({
-        "action": action,
+        "action": "REDUCE_BID",
         "keyword_id": keyword_id,
         "request_payload": update_payload,
         **bid_audit,
@@ -779,13 +781,91 @@ def change_bid(profile_id, country_code, payload, dry_run=True, action="REDUCE_B
     return result
 
 
-
-def reduce_bid(profile_id, country_code, payload, dry_run=True):
-    return change_bid(profile_id, country_code, payload, dry_run=dry_run, action="REDUCE_BID")
-
-
 def increase_bid(profile_id, country_code, payload, dry_run=True):
-    return change_bid(profile_id, country_code, payload, dry_run=dry_run, action="INCREASE_BID")
+    keyword_id = _get_keyword_id(payload)
+
+    live_keyword_result = get_keyword_live(
+        profile_id=profile_id,
+        country_code=country_code,
+        keyword_id=keyword_id,
+    )
+
+    if not live_keyword_result.get("success"):
+        return {
+            "success": False,
+            "dry_run": dry_run,
+            "http_status": live_keyword_result.get("http_status"),
+            "amazon_request_id": live_keyword_result.get("amazon_request_id"),
+            "action": "INCREASE_BID",
+            "keyword_id": keyword_id,
+            "response_json": live_keyword_result,
+            "error_message": live_keyword_result.get("error_message"),
+        }
+
+    live_keyword = live_keyword_result.get("keyword")
+    current_bid = _extract_bid_from_keyword(live_keyword)
+    new_bid = _resolve_bid(payload, "INCREASE_BID", live_current_bid=current_bid)
+
+    validation_errors, validation_warnings = _validate_bid_change(
+        current_bid=current_bid,
+        new_bid=new_bid,
+    )
+
+    if validation_errors:
+        return {
+            "success": False,
+            "dry_run": dry_run,
+            "action": "INCREASE_BID",
+            "keyword_id": keyword_id,
+            "current_bid": current_bid,
+            "new_bid": new_bid,
+            "bid_validation": {
+                "ok": False,
+                "errors": validation_errors,
+                "warnings": validation_warnings,
+                "limits": BID_LIMITS,
+            },
+            "response_json": {
+                "status": "BID_VALIDATION_FAILED",
+                "live_keyword": live_keyword,
+            },
+            "error_message": "; ".join(validation_errors),
+        }
+
+    change_pct = None
+    if current_bid is not None and current_bid > 0:
+        change_pct = round(((new_bid - current_bid) / current_bid) * 100, 2)
+
+    update_payload = {
+        "keywordId": keyword_id,
+        "bid": new_bid,
+    }
+
+    bid_audit = {
+        "current_bid": current_bid,
+        "new_bid": new_bid,
+        "bid_change": round(new_bid - current_bid, 2) if current_bid is not None else None,
+        "bid_change_percent": change_pct,
+        "bid_validation": {
+            "ok": True,
+            "errors": [],
+            "warnings": validation_warnings,
+            "limits": BID_LIMITS,
+        },
+        "live_keyword_before": live_keyword,
+    }
+
+    if dry_run:
+        return _dry_run_result("INCREASE_BID", profile_id, country_code, keyword_id, update_payload, extra=bid_audit)
+
+    result = _send_keyword_update(profile_id, country_code, update_payload)
+    result.update({
+        "action": "INCREASE_BID",
+        "keyword_id": keyword_id,
+        "request_payload": update_payload,
+        **bid_audit,
+    })
+    return result
 
 
 def execute_amazon_action(action, profile_id, country_code, payload, dry_run=True):

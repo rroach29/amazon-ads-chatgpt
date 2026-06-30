@@ -26,6 +26,7 @@ SUPPORTED_ACTIONS = {
     "DECREASE_BUDGET",
     "SET_BUDGET",
     "REDUCE_BID",
+    "INCREASE_BID",
     "SET_BID",
     "ADD_NEGATIVE_KEYWORD",
     "HARVEST_KEYWORD",
@@ -39,6 +40,7 @@ LIVE_SUPPORTED_ACTIONS = {
     "DECREASE_BUDGET",
     "SET_BUDGET",
     "REDUCE_BID",
+    "INCREASE_BID",
 }
 
 
@@ -144,7 +146,7 @@ def _validate_execution(
 
     payload = payload_override if isinstance(payload_override, dict) else _payload_dict(decision)
 
-    if action in ["PAUSE_CAMPAIGN", "RESUME_CAMPAIGN", "INCREASE_BUDGET", "DECREASE_BUDGET", "SET_BUDGET", "REDUCE_BID"]:
+    if action in ["PAUSE_CAMPAIGN", "RESUME_CAMPAIGN", "INCREASE_BUDGET", "DECREASE_BUDGET", "SET_BUDGET", "REDUCE_BID", "INCREASE_BID"]:
         if not _get_payload_value(payload, "campaign_id", "campaignId"):
             errors.append("Campaign action requires campaign_id in decision payload.")
 
@@ -155,7 +157,7 @@ def _validate_execution(
                     "Live execution requires resolved profile_id and country_code from marketplace-aware data."
                 )
 
-    if action in ["SET_BID", "REDUCE_BID"]:
+    if action in ["SET_BID", "REDUCE_BID", "INCREASE_BID"]:
         if not _get_payload_value(payload, "keyword_id", "keywordId"):
             errors.append("Bid action requires keyword_id in decision payload.")
 
@@ -209,7 +211,7 @@ def _validate_execution(
                     "current_budget is fetched live from Amazon during execution."
                 )
 
-    if action in ["REDUCE_BID"]:
+    if action in ["REDUCE_BID", "INCREASE_BID"]:
         candidate_bid = _get_payload_value(
             payload,
             "new_bid",
@@ -227,10 +229,13 @@ def _validate_execution(
             "percentage",
             "reduce_percent",
             "reduction_percent",
+            "increase_percent",
             "decrease_percent",
             "change_percent",
             "suggested_bid_reduction_percent",
             "suggestedBidReductionPercent",
+            "suggested_bid_increase_percent",
+            "suggestedBidIncreasePercent",
         )
 
         amount = _get_payload_value(
@@ -246,7 +251,7 @@ def _validate_execution(
 
         if not has_final_bid and not has_delta:
             errors.append(
-                "REDUCE_BID requires either a final bid, reduction percent, or amount. "
+                f"{action} requires either a final bid, change percent, or amount. "
                 "current_bid is fetched live from Amazon during execution."
             )
 
@@ -276,7 +281,7 @@ def create_execution_job(
         enriched_payload = raw_payload
         marketplace_context = raw_context
 
-        if action in ["PAUSE_CAMPAIGN", "RESUME_CAMPAIGN", "INCREASE_BUDGET", "DECREASE_BUDGET", "SET_BUDGET", "REDUCE_BID"]:
+        if action in ["PAUSE_CAMPAIGN", "RESUME_CAMPAIGN", "INCREASE_BUDGET", "DECREASE_BUDGET", "SET_BUDGET", "REDUCE_BID", "INCREASE_BID"]:
             identity_result = enrich_payload_with_campaign_identity(
                 payload=raw_payload,
                 existing_context=raw_context,

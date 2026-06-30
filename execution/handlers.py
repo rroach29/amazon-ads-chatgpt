@@ -127,6 +127,30 @@ def execute_reduce_bid(decision):
     )
 
 
+def execute_increase_bid(decision):
+    payload = decision.payload or {}
+
+    return _base_result(
+        decision=decision,
+        action="INCREASE_BID",
+        message=(
+            f"Would increase bid by "
+            f"{payload.get('suggested_bid_increase_percent') or payload.get('increase_percent') or payload.get('percent')}%"
+        ),
+        payload=payload,
+        undo_supported=True,
+        undo_action="RESTORE_PREVIOUS_BID",
+        amazon_request={
+            "campaign_id": payload.get("campaign_id"),
+            "ad_group_id": payload.get("ad_group_id"),
+            "keyword_id": payload.get("keyword_id"),
+            "keyword": payload.get("keyword"),
+            "increase_percent": payload.get("suggested_bid_increase_percent") or payload.get("increase_percent") or payload.get("percent"),
+            "recommended_bid": payload.get("recommended_bid") or payload.get("target_bid") or payload.get("new_bid"),
+        },
+    )
+
+
 def execute_increase_budget(decision):
     payload = decision.payload or {}
 
@@ -152,5 +176,6 @@ EXECUTION_HANDLERS = {
     "ADD_NEGATIVE_KEYWORD": execute_add_negative_keyword,
     "HARVEST_KEYWORD": execute_harvest_keyword,
     "REDUCE_BID": execute_reduce_bid,
+    "INCREASE_BID": execute_increase_bid,
     "INCREASE_BUDGET": execute_increase_budget,
 }

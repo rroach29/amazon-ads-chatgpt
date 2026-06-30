@@ -1,3 +1,24 @@
+"""
+Business OS v6.1.1
+Decision Management
+
+Purpose:
+- Persist generated optimizer decisions immediately.
+- Return stable decision_id values back to /business-os/decisions.
+- Preserve the existing DecisionHistory table and routes.
+- Avoid a database migration for this patch.
+
+Lifecycle used by the current table:
+OPEN -> APPROVED -> EXECUTED
+OPEN -> REJECTED
+OPEN/APPROVED/EXECUTED -> EVALUATED
+
+Future migration note:
+A separate immutable decision_uuid column can be added later. For now, the
+existing integer DecisionHistory.id is the stable decision identity used by
+Swagger, approval, execution, history, and learning.
+"""
+
 from datetime import datetime
 
 from database import SessionLocal
@@ -5,9 +26,26 @@ from models import DecisionHistory
 from business_data_context import resolve_data_context
 
 
+OPEN_STATUSES = {"OPEN", "APPROVED"}
+CAMPAIGN_DECISIONS = {
+    "PAUSE_CAMPAIGN",
+    "RESUME_CAMPAIGN",
+    "INCREASE_BUDGET",
+    "DECREASE_BUDGET",
+    "SET_BUDGET",
+}
+BID_DECISIONS = {"REDUCE_BID", "INCREASE_BID", "SET_BID"}
+SEARCH_TERM_DECISIONS = {
+    "ADD_NEGATIVE_KEYWORD",
+    "HARVEST_KEYWORD",
+    "PROMOTE_TO_EXACT",
+}
+
+
 def serialize_decision_history(row):
     return {
         "id": row.id,
+        "decision_id": row.id,
         "created_at": str(row.created_at),
         "evaluated_at": str(row.evaluated_at) if row.evaluated_at else None,
         "channel": row.channel,
@@ -20,11 +58,38 @@ def serialize_decision_history(row):
         "payload": row.payload,
         "estimated_monthly_impact": row.estimated_monthly_impact,
         "status": row.status,
+        "lifecycle": {
+            "state": row.status,
+            "created_at": str(row.created_at),
+            "evaluated_at": str(row.evaluated_at) if row.evaluated_at else None,
+            "next_allowed_actions": _next_allowed_actions(row.status),
+        },
         "outcome": row.outcome,
         "actual_impact": row.actual_impact,
         "was_correct": row.was_correct,
         "notes": row.notes,
     }
+
+
+def _next_allowed_actions(status):
+    status = str(status or "OPEN").upper()
+
+    if status == "OPEN":
+        return ["approve", "reject", "execute_dry_run", "evaluate"]
+
+    if status == "APPROVED":
+        return ["execute", "reject", "evaluate"]
+
+    if status == "EXECUTED":
+        return ["evaluate", "review_execution_history"]
+
+    if status == "REJECTED":
+        return ["evaluate"]
+
+    if status == "EVALUATED":
+        return ["review"]
+
+    return ["review"]
 
 
 def _payload_dict(value):
@@ -50,25 +115,59 @@ def _same_window(existing_payload, new_payload):
     )
 
 
+def _same_campaign(existing_payload, new_payload):
+    existing_payload = _payload_dict(existing_payload)
+    new_payload = _payload_dict(new_payload)
+    return str(existing_payload.get("campaign_id") or "") == str(new_payload.get("campaign_id") or "")
+
+
+def _same_ad_group(existing_payload, new_payload):
+    existing_payload = _payload_dict(existing_payload)
+    new_payload = _payload_dict(new_payload)
+    existing_ad_group = existing_payload.get("ad_group_id")
+    new_ad_group = new_payload.get("ad_group_id")
+
+    if not existing_ad_group and not new_ad_group:
+        return True
+
+    return str(existing_ad_group or "") == str(new_ad_group or "")
+
+
 def _same_identity(existing_payload, new_payload, decision_type):
     existing_payload = _payload_dict(existing_payload)
     new_payload = _payload_dict(new_payload)
 
-    if str(existing_payload.get("campaign_id")) != str(new_payload.get("campaign_id")):
+    if not _same_campaign(existing_payload, new_payload):
         return False
 
     # Campaign decisions are unique by decision type + campaign + data window.
-    if decision_type in ["PAUSE_CAMPAIGN", "INCREASE_BUDGET", "DECREASE_BUDGET", "SET_BUDGET"]:
+    if decision_type in CAMPAIGN_DECISIONS:
         return True
 
-    # Search-term decisions are unique by decision type + campaign + search term + data window.
-    if str(existing_payload.get("search_term") or "") == str(new_payload.get("search_term") or ""):
-        return True
+    # Bid decisions are unique by decision type + campaign + keyword/target + data window.
+    if decision_type in BID_DECISIONS:
+        existing_keyword_id = existing_payload.get("keyword_id") or existing_payload.get("target_id")
+        new_keyword_id = new_payload.get("keyword_id") or new_payload.get("target_id")
 
-    # Bid decisions can also be matched on keyword_id.
-    if decision_type in ["REDUCE_BID", "SET_BID"]:
-        if new_payload.get("keyword_id") and str(existing_payload.get("keyword_id")) == str(new_payload.get("keyword_id")):
+        if new_keyword_id and str(existing_keyword_id or "") == str(new_keyword_id):
             return True
+
+        # Some targeting rows only have keyword text/target expression.
+        return (
+            str(existing_payload.get("keyword") or "") == str(new_payload.get("keyword") or "")
+            and _same_ad_group(existing_payload, new_payload)
+        )
+
+    # Search-term decisions are unique by type + campaign + ad group + search term + data window.
+    if decision_type in SEARCH_TERM_DECISIONS:
+        return (
+            str(existing_payload.get("search_term") or "") == str(new_payload.get("search_term") or "")
+            and _same_ad_group(existing_payload, new_payload)
+        )
+
+    # Safe fallback: campaign + search term when present.
+    if new_payload.get("search_term"):
+        return str(existing_payload.get("search_term") or "") == str(new_payload.get("search_term") or "")
 
     return False
 
@@ -88,12 +187,36 @@ def _merge_payload(existing_payload, new_payload):
     return merged, changed
 
 
+def _attach_history_identity(decision, row):
+    """Return a decision dict enriched with its persistent DecisionHistory identity."""
+    enriched = dict(decision or {})
+    enriched["id"] = row.id
+    enriched["decision_id"] = row.id
+    enriched["status"] = row.status
+    enriched["created_at"] = str(row.created_at)
+    enriched["lifecycle"] = {
+        "state": row.status,
+        "created_at": str(row.created_at),
+        "evaluated_at": str(row.evaluated_at) if row.evaluated_at else None,
+        "next_allowed_actions": _next_allowed_actions(row.status),
+    }
+    return enriched
+
+
 def save_decisions_to_history(decisions):
+    """
+    Upsert generated decisions into DecisionHistory and return stable IDs.
+
+    This function intentionally matches current OPEN/APPROVED rows instead of
+    creating duplicate decisions every time /business-os/decisions is called.
+    """
     db = SessionLocal()
 
     try:
         saved = 0
         updated = 0
+        unchanged = 0
+        persisted_items = []
 
         for decision in decisions:
             payload = decision.get("payload", {})
@@ -101,7 +224,7 @@ def save_decisions_to_history(decisions):
 
             open_items = (
                 db.query(DecisionHistory)
-                .filter(DecisionHistory.status == "OPEN")
+                .filter(DecisionHistory.status.in_(list(OPEN_STATUSES)))
                 .filter(DecisionHistory.decision == decision_type)
                 .all()
             )
@@ -133,7 +256,11 @@ def save_decisions_to_history(decisions):
                         existing_item.estimated_monthly_impact,
                     )
                     updated += 1
+                else:
+                    unchanged += 1
 
+                db.flush()
+                persisted_items.append(_attach_history_identity(decision, existing_item))
                 continue
 
             row = DecisionHistory(
@@ -150,7 +277,9 @@ def save_decisions_to_history(decisions):
             )
 
             db.add(row)
+            db.flush()
             saved += 1
+            persisted_items.append(_attach_history_identity(decision, row))
 
         db.commit()
 
@@ -158,6 +287,9 @@ def save_decisions_to_history(decisions):
             "status": "OK",
             "saved": saved,
             "updated": updated,
+            "unchanged": unchanged,
+            "items": persisted_items,
+            "ids": [item.get("decision_id") for item in persisted_items],
         }
 
     except Exception:
@@ -225,6 +357,28 @@ def get_decision_history(
             "current_window_only": current_window_only if status == "OPEN" else False,
             "include_legacy": include_legacy,
             "items": [serialize_decision_history(row) for row in rows],
+        }
+
+    finally:
+        db.close()
+
+
+def get_decision(decision_id: int):
+    db = SessionLocal()
+
+    try:
+        row = db.query(DecisionHistory).filter(DecisionHistory.id == decision_id).first()
+
+        if not row:
+            return {
+                "status": "NOT_FOUND",
+                "message": "Decision not found.",
+                "decision_id": decision_id,
+            }
+
+        return {
+            "status": "OK",
+            "item": serialize_decision_history(row),
         }
 
     finally:
