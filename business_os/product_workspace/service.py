@@ -1,9 +1,9 @@
-"""Business OS v0.6.1 — Product Workspace hotfix.
+"""Business OS v0.6.2 — Product Workspace hotfix.
 
 Fixes:
-- ProductGenome compatibility when the live model does not have a `.scores` JSON field.
-- ProductWorkspace portfolio no longer crashes on ProductGenome attribute mismatch.
-- Workspace detail safely handles either JSON-style or column-style ProductGenome models.
+- ProductGenome compatibility when `.scores` JSON field is absent.
+- ProductChannel compatibility when `.listing_id`, `.product_url`, or `.raw` fields are absent.
+- Product Workspace detail no longer crashes on channel field mismatch.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ except Exception:
 
 
 class ProductWorkspaceService:
-    version = "business-os-0.6.1"
+    version = "business-os-0.6.2"
 
     @classmethod
     def portfolio(cls, limit: int = 250, query: str | None = None) -> dict[str, Any]:
@@ -223,8 +223,8 @@ class ProductWorkspaceService:
             .count()
         )
 
-        channel_names = sorted(set([c.channel for c in channels if c.channel]))
-        marketplaces = sorted(set([c.marketplace for c in channels if c.marketplace]))
+        channel_names = sorted(set([cls._safe_get(c, "channel") for c in channels if cls._safe_get(c, "channel")]))
+        marketplaces = sorted(set([cls._safe_get(c, "marketplace") for c in channels if cls._safe_get(c, "marketplace")]))
         scores = cls._genome_scores(genome)
 
         return {
@@ -317,7 +317,6 @@ class ProductWorkspaceService:
                 "confidence": scores.get("confidence"),
             }
 
-        # Column-style compatibility. Different earlier builds used different names.
         aliases = {
             "product_health": ["product_health", "health_score", "health"],
             "organic_strength": ["organic_strength", "organic_score"],
@@ -395,33 +394,48 @@ class ProductWorkspaceService:
             "updated_at": row.updated_at.isoformat() if row.updated_at else None,
         }
 
-    @staticmethod
-    def _channel(row: ProductChannel) -> dict[str, Any]:
+    @classmethod
+    def _channel(cls, row: ProductChannel) -> dict[str, Any]:
+        """Serialize ProductChannel defensively across schema versions."""
+        raw = cls._safe_get(row, "raw")
+        raw = raw if isinstance(raw, dict) else {}
+
+        def first_attr_or_raw(*names):
+            for name in names:
+                value = cls._safe_get(row, name)
+                if value is not None:
+                    return value
+                if raw.get(name) is not None:
+                    return raw.get(name)
+            return None
+
         return {
-            "id": row.id,
-            "master_product_id": row.master_product_id,
-            "channel": row.channel,
-            "marketplace": row.marketplace,
-            "sku": row.sku,
-            "asin": row.asin,
-            "listing_id": row.listing_id,
-            "product_url": row.product_url,
-            "status": row.status,
-            "raw": row.raw,
+            "id": cls._safe_get(row, "id"),
+            "master_product_id": cls._safe_get(row, "master_product_id"),
+            "channel": first_attr_or_raw("channel", "platform"),
+            "marketplace": first_attr_or_raw("marketplace", "marketplace_id", "country_code"),
+            "sku": first_attr_or_raw("sku", "seller_sku", "merchant_sku"),
+            "asin": first_attr_or_raw("asin", "amazon_asin"),
+            "listing_id": first_attr_or_raw("listing_id", "etsy_listing_id", "shopify_product_id", "external_id"),
+            "product_url": first_attr_or_raw("product_url", "url", "listing_url"),
+            "status": first_attr_or_raw("status", "state") or "unknown",
+            "raw": raw,
         }
 
     @classmethod
     def _genome(cls, row: ProductGenome | None) -> dict[str, Any] | None:
         if not row:
             return None
+        created_at = cls._safe_get(row, "created_at")
+        updated_at = cls._safe_get(row, "updated_at")
         return {
             "master_product_id": cls._safe_get(row, "master_product_id"),
             "scores": cls._genome_scores(row),
             "strategy": cls._genome_strategy(row),
             "signals": cls._genome_signals(row),
             "recommendations": cls._genome_recommendations(row),
-            "created_at": cls._safe_get(row, "created_at").isoformat() if cls._safe_get(row, "created_at") else None,
-            "updated_at": cls._safe_get(row, "updated_at").isoformat() if cls._safe_get(row, "updated_at") else None,
+            "created_at": created_at.isoformat() if created_at else None,
+            "updated_at": updated_at.isoformat() if updated_at else None,
         }
 
     @staticmethod
