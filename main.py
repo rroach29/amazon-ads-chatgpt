@@ -60,6 +60,8 @@ from routes_registry_manager import router as registry_manager_router
 from routes_admin_portal import router as admin_portal_router
 from routes_mission_control_v030 import router as mission_control_v030_router
 from routes_product_advertising import router as product_advertising_router
+from routes_product_search import router as product_search_router
+
 
 app = FastAPI(title="Business OS API")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://localhost:4173", "https://amazon-ads-chatgpt.onrender.com"], allow_origin_regex=r"https://.*\.onrender\.com", allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
@@ -116,6 +118,9 @@ app.include_router(registry_manager_router, prefix="/business-os", tags=["Busine
 app.include_router(admin_portal_router, prefix="/business-os", tags=["Business OS Admin Portal"])
 app.include_router(mission_control_v030_router, prefix="/business-os", tags=["Business OS Mission Control v0.3"])
 app.include_router(product_advertising_router, prefix="/business-os", tags=["Business OS Product Advertising Intelligence"])
+app.include_router(product_search_router, prefix="/business-os", tags=["Business OS Product Search Intelligence"])
+
+
 @app.get("/")
 def root(): return {"status": "ok", "message": "Business OS API is running"}
 @app.get("/health")
