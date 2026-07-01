@@ -1,1 +1,1 @@
-"""Product Advertising Intelligence."""
+"""Products."""

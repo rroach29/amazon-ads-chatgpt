@@ -1,1 +1,1 @@
-"""Product Advertising Intelligence."""
+"""Business OS."""
