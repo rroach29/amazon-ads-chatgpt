@@ -1,4 +1,4 @@
-"""Business Core v1.1 — Registry Integration routes."""
+"""Business Core v1.1.1 — Registry Integration routes."""
 
 from fastapi import APIRouter, Header
 

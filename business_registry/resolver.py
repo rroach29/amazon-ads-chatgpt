@@ -1,4 +1,7 @@
-"""Business Core v1.1 — Registry Resolver.
+"""Business Core v1.1.1 — Registry Resolver hotfix.
+
+Fixes v1.1 runtime error:
+- imports datetime correctly for event generation.
 
 Attaches Master Product IDs to existing Amazon Ads and Seller Central rows where
 the data contains a resolvable SKU, ASIN, or channel identifier.
@@ -6,7 +9,9 @@ the data contains a resolvable SKU, ASIN, or channel identifier.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy import inspect, text
 
@@ -16,7 +21,7 @@ from business_registry.models import MasterProduct, ProductChannel, BusinessEven
 
 
 class RegistryResolverService:
-    version = "business-core-1.1"
+    version = "business-core-1.1.1"
 
     @staticmethod
     def migration_status() -> dict[str, Any]:
@@ -36,10 +41,6 @@ class RegistryResolverService:
 
     @staticmethod
     def ensure_registry_columns() -> dict[str, Any]:
-        """Adds nullable master_product_id columns to existing data tables.
-
-        PostgreSQL syntax is used because the production app is on Render/Postgres.
-        """
         statements = [
             "ALTER TABLE campaign_daily_details ADD COLUMN IF NOT EXISTS master_product_id VARCHAR",
             "CREATE INDEX IF NOT EXISTS ix_campaign_daily_details_master_product_id ON campaign_daily_details (master_product_id)",
@@ -102,139 +103,73 @@ class RegistryResolverService:
 
     @staticmethod
     def backfill_seller_central(dry_run: bool = True, limit: int = 5000) -> dict[str, Any]:
-        db = SessionLocal()
-        try:
-            if not RegistryResolverService._has_column("seller_central_sales_traffic", "master_product_id"):
-                return {"status": "MIGRATION_REQUIRED", "version": RegistryResolverService.version, "next_step": "Run POST /business-os/registry/integration/ensure-columns"}
-
-            rows = (
-                db.query(SellerCentralSalesTraffic)
-                .from_statement(text("SELECT * FROM seller_central_sales_traffic WHERE master_product_id IS NULL LIMIT :limit")).params(limit=max(1, min(limit, 20000))).all()
-            )
-            resolved = 0
-            unresolved = 0
-            samples = []
-
-            for row in rows:
-                mpid = RegistryResolverService._resolve_with_db(
-                    db,
-                    sku=row.sku,
-                    asin=row.asin,
-                    channel="Amazon",
-                )
-                if mpid:
-                    resolved += 1
-                    if not dry_run:
-                        db.execute(text("UPDATE seller_central_sales_traffic SET master_product_id = :mpid WHERE id = :id"), {"mpid": mpid, "id": row.id})
-                    if len(samples) < 25:
-                        samples.append({"row_id": row.id, "sku": row.sku, "asin": row.asin, "master_product_id": mpid})
-                else:
-                    unresolved += 1
-
-            if not dry_run:
-                db.commit()
-                RegistryResolverService._record_event(
-                    db,
-                    event_type="RegistryBackfill",
-                    title="Seller Central rows resolved to Master Products",
-                    description=f"Resolved {resolved} Seller Central rows to Master Product IDs.",
-                    payload={"resolved": resolved, "unresolved": unresolved, "dry_run": dry_run},
-                )
-                db.commit()
-
-            return {
-                "status": "DRY_RUN" if dry_run else "UPDATED",
-                "version": RegistryResolverService.version,
-                "table": "seller_central_sales_traffic",
-                "rows_checked": len(rows),
-                "resolved": resolved,
-                "unresolved": unresolved,
-                "sample_matches": samples,
-                "dry_run": dry_run,
-            }
-        except Exception as exc:
-            db.rollback()
-            return {"status": "ERROR", "version": RegistryResolverService.version, "message": str(exc)}
-        finally:
-            db.close()
+        return RegistryResolverService._backfill_table(
+            table_name="seller_central_sales_traffic",
+            row_model=SellerCentralSalesTraffic,
+            resolver="seller_central",
+            dry_run=dry_run,
+            limit=limit,
+        )
 
     @staticmethod
     def backfill_campaign_details(dry_run: bool = True, limit: int = 5000) -> dict[str, Any]:
-        db = SessionLocal()
-        try:
-            if not RegistryResolverService._has_column("campaign_daily_details", "master_product_id"):
-                return {"status": "MIGRATION_REQUIRED", "version": RegistryResolverService.version, "next_step": "Run POST /business-os/registry/integration/ensure-columns"}
-
-            rows = (
-                db.query(CampaignDailyDetail)
-                .from_statement(text("SELECT * FROM campaign_daily_details WHERE master_product_id IS NULL LIMIT :limit")).params(limit=max(1, min(limit, 20000))).all()
-            )
-
-            resolved = 0
-            unresolved = 0
-            samples = []
-            for row in rows:
-                mpid = RegistryResolverService._resolve_from_ad_row(db, row)
-                if mpid:
-                    resolved += 1
-                    if not dry_run:
-                        db.execute(text("UPDATE campaign_daily_details SET master_product_id = :mpid WHERE id = :id"), {"mpid": mpid, "id": row.id})
-                    if len(samples) < 25:
-                        samples.append({"row_id": row.id, "campaign_name": row.campaign_name, "master_product_id": mpid})
-                else:
-                    unresolved += 1
-
-            if not dry_run:
-                db.commit()
-                RegistryResolverService._record_event(
-                    db,
-                    event_type="RegistryBackfill",
-                    title="Campaign rows resolved to Master Products",
-                    description=f"Resolved {resolved} campaign detail rows to Master Product IDs.",
-                    payload={"resolved": resolved, "unresolved": unresolved, "dry_run": dry_run},
-                )
-                db.commit()
-
-            return {
-                "status": "DRY_RUN" if dry_run else "UPDATED",
-                "version": RegistryResolverService.version,
-                "table": "campaign_daily_details",
-                "rows_checked": len(rows),
-                "resolved": resolved,
-                "unresolved": unresolved,
-                "sample_matches": samples,
-                "dry_run": dry_run,
-                "note": "Campaign matching uses explicit ASIN/SKU fields in raw payload when available, then conservative SKU/name token matching.",
-            }
-        except Exception as exc:
-            db.rollback()
-            return {"status": "ERROR", "version": RegistryResolverService.version, "message": str(exc)}
-        finally:
-            db.close()
+        return RegistryResolverService._backfill_table(
+            table_name="campaign_daily_details",
+            row_model=CampaignDailyDetail,
+            resolver="ad_row",
+            dry_run=dry_run,
+            limit=limit,
+        )
 
     @staticmethod
     def backfill_search_terms(dry_run: bool = True, limit: int = 5000) -> dict[str, Any]:
+        return RegistryResolverService._backfill_table(
+            table_name="search_term_daily_details",
+            row_model=SearchTermDailyDetail,
+            resolver="ad_row",
+            dry_run=dry_run,
+            limit=limit,
+        )
+
+    @staticmethod
+    def _backfill_table(table_name: str, row_model, resolver: str, dry_run: bool, limit: int) -> dict[str, Any]:
         db = SessionLocal()
         try:
-            if not RegistryResolverService._has_column("search_term_daily_details", "master_product_id"):
-                return {"status": "MIGRATION_REQUIRED", "version": RegistryResolverService.version, "next_step": "Run POST /business-os/registry/integration/ensure-columns"}
+            if not RegistryResolverService._has_column(table_name, "master_product_id"):
+                return {
+                    "status": "MIGRATION_REQUIRED",
+                    "version": RegistryResolverService.version,
+                    "table": table_name,
+                    "next_step": "Run POST /business-os/registry/integration/ensure-columns",
+                }
 
+            safe_limit = max(1, min(limit, 20000))
             rows = (
-                db.query(SearchTermDailyDetail)
-                .from_statement(text("SELECT * FROM search_term_daily_details WHERE master_product_id IS NULL LIMIT :limit")).params(limit=max(1, min(limit, 20000))).all()
+                db.query(row_model)
+                .from_statement(text(f"SELECT * FROM {table_name} WHERE master_product_id IS NULL LIMIT :limit"))
+                .params(limit=safe_limit)
+                .all()
             )
 
             resolved = 0
             unresolved = 0
             samples = []
+
             for row in rows:
-                mpid = RegistryResolverService._resolve_from_ad_row(db, row)
+                if resolver == "seller_central":
+                    mpid = RegistryResolverService._resolve_with_db(db, sku=getattr(row, "sku", None), asin=getattr(row, "asin", None), channel="Amazon")
+                else:
+                    mpid = RegistryResolverService._resolve_from_ad_row(db, row)
+
                 if mpid:
                     resolved += 1
                     if not dry_run:
-                        db.execute(text("UPDATE search_term_daily_details SET master_product_id = :mpid WHERE id = :id"), {"mpid": mpid, "id": row.id})
+                        db.execute(
+                            text(f"UPDATE {table_name} SET master_product_id = :mpid WHERE id = :id"),
+                            {"mpid": mpid, "id": row.id},
+                        )
                     if len(samples) < 25:
-                        samples.append({"row_id": row.id, "campaign_name": row.campaign_name, "search_term": row.search_term, "master_product_id": mpid})
+                        samples.append(RegistryResolverService._sample_row(table_name, row, mpid))
                 else:
                     unresolved += 1
 
@@ -243,16 +178,16 @@ class RegistryResolverService:
                 RegistryResolverService._record_event(
                     db,
                     event_type="RegistryBackfill",
-                    title="Search term rows resolved to Master Products",
-                    description=f"Resolved {resolved} search term detail rows to Master Product IDs.",
-                    payload={"resolved": resolved, "unresolved": unresolved, "dry_run": dry_run},
+                    title=f"{table_name} rows resolved to Master Products",
+                    description=f"Resolved {resolved} rows in {table_name} to Master Product IDs.",
+                    payload={"table": table_name, "resolved": resolved, "unresolved": unresolved, "dry_run": dry_run},
                 )
                 db.commit()
 
             return {
                 "status": "DRY_RUN" if dry_run else "UPDATED",
                 "version": RegistryResolverService.version,
-                "table": "search_term_daily_details",
+                "table": table_name,
                 "rows_checked": len(rows),
                 "resolved": resolved,
                 "unresolved": unresolved,
@@ -261,7 +196,7 @@ class RegistryResolverService:
             }
         except Exception as exc:
             db.rollback()
-            return {"status": "ERROR", "version": RegistryResolverService.version, "message": str(exc)}
+            return {"status": "ERROR", "version": RegistryResolverService.version, "table": table_name, "message": str(exc)}
         finally:
             db.close()
 
@@ -270,11 +205,7 @@ class RegistryResolverService:
         db = SessionLocal()
         try:
             summary = {"status": "OK", "version": RegistryResolverService.version, "tables": {}}
-            for model, table_name in [
-                (SellerCentralSalesTraffic, "seller_central_sales_traffic"),
-                (CampaignDailyDetail, "campaign_daily_details"),
-                (SearchTermDailyDetail, "search_term_daily_details"),
-            ]:
+            for table_name in ["seller_central_sales_traffic", "campaign_daily_details", "search_term_daily_details"]:
                 if not RegistryResolverService._has_column(table_name, "master_product_id"):
                     summary["tables"][table_name] = {"migration_required": True}
                     continue
@@ -338,22 +269,24 @@ class RegistryResolverService:
     @staticmethod
     def _resolve_from_ad_row(db, row) -> str | None:
         raw = row.raw if isinstance(row.raw, dict) else {}
-        explicit_values = [
-            raw.get("sku"),
-            raw.get("advertisedSku"),
-            raw.get("purchasedSku"),
-            raw.get("asin"),
-            raw.get("advertisedAsin"),
-            raw.get("purchasedAsin"),
+        explicit_pairs = [
+            ("sku", raw.get("sku")),
+            ("sku", raw.get("advertisedSku")),
+            ("sku", raw.get("purchasedSku")),
+            ("asin", raw.get("asin")),
+            ("asin", raw.get("advertisedAsin")),
+            ("asin", raw.get("purchasedAsin")),
         ]
-        for value in explicit_values:
-            mpid = RegistryResolverService._resolve_with_db(db, sku=value, asin=value, channel="Amazon")
+        for kind, value in explicit_pairs:
+            if kind == "sku":
+                mpid = RegistryResolverService._resolve_with_db(db, sku=value, channel="Amazon")
+            else:
+                mpid = RegistryResolverService._resolve_with_db(db, asin=value, channel="Amazon")
             if mpid:
                 return mpid
 
-        # Conservative fallback: match registry SKU/name tokens in campaign name.
-        text = " ".join([
-            str(row.campaign_name or ""),
+        text_blob = " ".join([
+            str(getattr(row, "campaign_name", "") or ""),
             str(getattr(row, "ad_group_name", "") or ""),
             str(raw),
         ]).lower()
@@ -361,7 +294,7 @@ class RegistryResolverService:
         products = db.query(MasterProduct).all()
         for product in products:
             tokens = RegistryResolverService._tokens(product.primary_sku) | RegistryResolverService._tokens(product.name)
-            if tokens and any(token in text for token in tokens if len(token) >= 4):
+            if tokens and any(token in text_blob for token in tokens if len(token) >= 4):
                 return product.master_product_id
 
         return None
@@ -370,7 +303,7 @@ class RegistryResolverService:
     def _record_event(db, event_type: str, title: str, description: str, payload: dict[str, Any]):
         db.add(
             BusinessEvent(
-                event_id=f"EV-BACKFILL-{abs(hash(title + str(payload) + str(datetime.utcnow()))) % 10_000_000_000}",
+                event_id=f"EV-{uuid4().hex[:12].upper()}",
                 event_type=event_type,
                 title=title,
                 description=description,
@@ -378,6 +311,16 @@ class RegistryResolverService:
                 payload=payload,
             )
         )
+
+    @staticmethod
+    def _sample_row(table_name: str, row, mpid: str) -> dict[str, Any]:
+        sample = {"row_id": getattr(row, "id", None), "master_product_id": mpid}
+        for field in ["sku", "asin", "campaign_name", "search_term", "date"]:
+            if hasattr(row, field):
+                value = getattr(row, field)
+                sample[field] = value.isoformat() if hasattr(value, "isoformat") else value
+        sample["table"] = table_name
+        return sample
 
     @staticmethod
     def _has_column(table: str, column: str) -> bool:
@@ -396,5 +339,5 @@ class RegistryResolverService:
     def _clean(value: Any) -> str | None:
         if value is None:
             return None
-        text = str(value).strip()
-        return text or None
+        text_value = str(value).strip()
+        return text_value or None
