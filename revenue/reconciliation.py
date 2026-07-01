@@ -1,10 +1,11 @@
-"""Business OS v9.0.3 — Organic vs Paid reconciliation service.
+"""Business OS v9.0.4 — Organic vs Paid reconciliation service.
 
 Root fix:
-- Do NOT sum campaign/detail rows for paid revenue reconciliation.
-- Use DailyDashboard as the marketplace/date-level paid-sales source.
-- For each aligned date + marketplace + profile, keep only the latest dashboard row.
-  This prevents duplicate/cumulative dashboard snapshots from inflating ad sales.
+- Normalize marketplace identity BEFORE grouping Seller Central and Ads rows.
+- Seller Central may store marketplace as "US" / "CA" while Ads stores
+  "amazon.com" / "amazon.ca". These are now reconciled to the same canonical key.
+- Ignore blank/unknown aggregate Ads rows when country-specific Ads rows exist for
+  the same aligned date to avoid double-counting.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from models import DailyDashboard, SPAPIReportJob, SellerCentralSalesTraffic
 
 
 class RevenueReconciliationService:
-    version = "9.0.3"
+    version = "9.0.4"
 
     @staticmethod
     def organic_vs_paid(
@@ -54,12 +55,12 @@ class RevenueReconciliationService:
 
             seller_by_market = defaultdict(lambda: RevenueReconciliationService._empty_seller_bucket())
             for row in seller_rows:
-                key = RevenueReconciliationService._market_key(row.country_code, row.marketplace, row.currency)
+                key = RevenueReconciliationService._canonical_market_key(row.country_code, row.marketplace, row.currency)
                 RevenueReconciliationService._add_seller(seller_by_market[key], row)
 
             ads_by_market = defaultdict(lambda: RevenueReconciliationService._empty_ad_bucket())
             for row in ad_rows:
-                key = RevenueReconciliationService._market_key(row.country_code, row.marketplace, row.currency)
+                key = RevenueReconciliationService._canonical_market_key(row.country_code, row.marketplace, row.currency)
                 RevenueReconciliationService._add_ad(ads_by_market[key], row)
 
             keys = sorted(set(seller_by_market.keys()) | set(ads_by_market.keys()))
@@ -82,10 +83,10 @@ class RevenueReconciliationService:
                         {
                             "level": "WARNING",
                             "marketplace": item["label"],
-                            "message": "Paid-attributed revenue exceeds Seller Central total revenue for the aligned date. This may be caused by attribution-window timing, duplicate ad summaries, or incomplete Seller Central data.",
+                            "message": "Paid-attributed revenue exceeds Seller Central total revenue for the aligned date after canonical marketplace normalization.",
                             "total_revenue": item["total_revenue"],
                             "paid_revenue": item["paid_revenue"],
-                            "source": "daily_dashboards_deduped",
+                            "source": "canonical_marketplace_reconciliation",
                         }
                     )
                 marketplaces.append(item)
@@ -110,9 +111,9 @@ class RevenueReconciliationService:
                 "next_actions": RevenueReconciliationService._next_actions(status, warnings),
                 "data_quality_warnings": warnings,
                 "reconciliation_source": {
-                    "seller_central": "seller_central_sales_traffic exact aligned_date",
-                    "amazon_ads": "daily_dashboards exact aligned_date; latest row per date/profile/country/marketplace/currency",
-                    "root_fix": "v9.0.3 avoids summing duplicate/cumulative ad dashboard rows.",
+                    "seller_central": "seller_central_sales_traffic exact aligned_date, canonicalized marketplace key",
+                    "amazon_ads": "daily_dashboards exact aligned_date, canonicalized marketplace key, latest row per date/profile/country/marketplace/currency",
+                    "root_fix": "v9.0.4 normalizes marketplace identifiers before joining Seller Central and Ads.",
                 },
             }
             if debug:
@@ -120,6 +121,11 @@ class RevenueReconciliationService:
                     "seller_rows_included": len(seller_rows),
                     "ad_rows_included_after_dedupe": len(ad_rows),
                     "ad_dedupe": ad_debug,
+                    "marketplace_keys": {
+                        "seller_keys": [list(k) for k in sorted(seller_by_market.keys())],
+                        "ad_keys": [list(k) for k in sorted(ads_by_market.keys())],
+                        "combined_keys": [list(k) for k in keys],
+                    },
                 }
             return response
         finally:
@@ -156,7 +162,7 @@ class RevenueReconciliationService:
                     "daily_dashboards_amazon_ads": dashboard_rows,
                 },
                 "seller_central_pipeline_status": pipeline,
-                "reconciliation_note": "Revenue Intelligence uses the latest common date shared by Seller Central and Amazon Ads. Paid sales are sourced from de-duplicated DailyDashboard rows, not campaign detail sums.",
+                "reconciliation_note": "Revenue Intelligence uses the latest common date and canonical marketplace keys. US/amazon.com and CA/amazon.ca are normalized before reconciliation.",
             }
         finally:
             db.close()
@@ -226,16 +232,29 @@ class RevenueReconciliationService:
             query = query.filter(DailyDashboard.profile_id == profile_id)
 
         rows = query.all()
+
+        # If country-specific ad rows exist, blank/unknown country rows are likely
+        # aggregate rows and must not be summed with country rows.
+        country_specific_exists = any((row.country_code or "").strip() for row in rows)
+        filtered_rows = []
+        ignored_unknown_rows = []
+        for row in rows:
+            if country_specific_exists and not (row.country_code or "").strip():
+                ignored_unknown_rows.append(getattr(row, "id", None))
+                continue
+            filtered_rows.append(row)
+
         selected: dict[tuple[Any, ...], DailyDashboard] = {}
         duplicates = 0
 
-        for row in rows:
+        for row in filtered_rows:
+            country, marketplace, currency = RevenueReconciliationService._canonical_market_key(row.country_code, row.marketplace, row.currency)
             key = (
                 RevenueReconciliationService._date_str(row.date),
                 row.profile_id or "",
-                (row.country_code or "").upper(),
-                row.marketplace or "",
-                row.currency or "",
+                country,
+                marketplace,
+                currency,
             )
             existing = selected.get(key)
             if existing is None:
@@ -251,13 +270,32 @@ class RevenueReconciliationService:
         kept = list(selected.values())
         debug = {
             "raw_daily_dashboard_rows": len(rows),
+            "unknown_aggregate_rows_ignored": len(ignored_unknown_rows),
+            "ignored_unknown_row_ids": ignored_unknown_rows,
+            "rows_after_unknown_filter": len(filtered_rows),
             "deduped_daily_dashboard_rows": len(kept),
             "duplicate_rows_removed": duplicates,
-            "dedupe_key": ["date", "profile_id", "country_code", "marketplace", "currency"],
+            "dedupe_key": ["date", "profile_id", "canonical_country_code", "canonical_marketplace", "currency"],
             "included_row_ids": [getattr(row, "id", None) for row in kept],
             "source": "daily_dashboards",
         }
         return kept, debug
+
+    @staticmethod
+    def _canonical_market_key(country_code: str | None, marketplace: str | None, currency: str | None) -> tuple[str, str, str]:
+        country = (country_code or "").strip().upper()
+        market = (marketplace or "").strip().lower()
+        curr = (currency or "").strip().upper()
+
+        # Marketplace occasionally arrives as a country code from Seller Central.
+        if market in {"us", "usa", "united states", "amazon.com", "atvpdkikx0der"} or country == "US":
+            return ("US", "amazon.com", curr or "USD")
+        if market in {"ca", "canada", "amazon.ca", "a2euq1wtgctbg2"} or country == "CA":
+            return ("CA", "amazon.ca", curr or "CAD")
+        if market in {"mx", "mexico", "amazon.com.mx", "a1am78c64um0y8"} or country == "MX":
+            return ("MX", "amazon.com.mx", curr or "MXN")
+
+        return (country, market, curr)
 
     @staticmethod
     def _row_sort_value(row: DailyDashboard):
@@ -351,7 +389,7 @@ class RevenueReconciliationService:
             "conversion_rate": RevenueReconciliationService._ratio(orders, sessions),
             "advertising_dependency": RevenueReconciliationService._dependency_label(paid, total),
             "buy_box_percentage": round(buy_box, 4) if buy_box is not None else None,
-            "basis": "seller_central_sales_traffic_minus_deduped_daily_dashboard",
+            "basis": "canonical_seller_central_minus_canonical_deduped_daily_dashboard",
         }
 
     @staticmethod
@@ -413,33 +451,12 @@ class RevenueReconciliationService:
         total = RevenueReconciliationService._safe_float(summary.get("total_revenue"))
         paid = RevenueReconciliationService._safe_float(summary.get("paid_revenue"))
         if total <= 0:
-            return {
-                "score": 0,
-                "level": "LOW",
-                "reason": "No Seller Central total revenue is available for the aligned date.",
-                "data_freshness": alignment,
-            }
+            return {"score": 0, "level": "LOW", "reason": "No Seller Central total revenue is available for the aligned date.", "data_freshness": alignment}
         if paid > total:
-            return {
-                "score": 35,
-                "level": "LOW",
-                "reason": "Paid-attributed revenue exceeds Seller Central total revenue after source-level reconciliation. Review attribution timing and source rows.",
-                "data_freshness": alignment,
-                "warnings": warnings,
-            }
+            return {"score": 35, "level": "LOW", "reason": "Paid-attributed revenue exceeds Seller Central total revenue after canonical marketplace normalization.", "data_freshness": alignment, "warnings": warnings}
         if not alignment.get("aligned"):
-            return {
-                "score": 75,
-                "level": "MEDIUM",
-                "reason": "Reconciliation used the latest common date because source latest dates differ.",
-                "data_freshness": alignment,
-            }
-        return {
-            "score": 90,
-            "level": "HIGH",
-            "reason": "Seller Central and Amazon Ads are aligned on the same latest date.",
-            "data_freshness": alignment,
-        }
+            return {"score": 75, "level": "MEDIUM", "reason": "Reconciliation used the latest common date because source latest dates differ.", "data_freshness": alignment}
+        return {"score": 90, "level": "HIGH", "reason": "Seller Central and Amazon Ads are aligned on the same latest date.", "data_freshness": alignment}
 
     @staticmethod
     def _priority_signals(summary: dict[str, Any], alignment: dict[str, Any], warnings: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -447,7 +464,7 @@ class RevenueReconciliationService:
         if not alignment.get("aligned"):
             signals.append({"priority": "MEDIUM", "signal": "Data sources not fully aligned", "action": f"Using latest common date {alignment.get('aligned_date')} for reconciliation."})
         if warnings:
-            signals.append({"priority": "HIGH", "signal": "Revenue attribution anomaly", "action": "Inspect debug output and verify DailyDashboard duplicate handling."})
+            signals.append({"priority": "HIGH", "signal": "Revenue attribution anomaly", "action": "Inspect debug marketplace keys and included dashboard rows."})
         dependency = summary.get("advertising_dependency")
         if dependency == "HIGH":
             signals.append({"priority": "HIGH", "signal": "High advertising dependency", "action": "Review listing conversion and organic ranking before increasing ad spend."})
@@ -458,14 +475,11 @@ class RevenueReconciliationService:
 
     @staticmethod
     def _next_actions(status: str, warnings: list[dict[str, Any]]) -> list[str]:
-        actions = [
-            "Run GET /business-os/revenue/data-health",
-            "Run GET /business-os/revenue/organic-vs-paid?debug=true",
-        ]
+        actions = ["Run GET /business-os/revenue/data-health", "Run GET /business-os/revenue/organic-vs-paid?debug=true"]
         if status != "OK":
             actions.append("Collect open Seller Central jobs or request a Sales & Traffic report for the aligned date.")
         if warnings:
-            actions.append("Review the debug.ad_dedupe section to confirm duplicate dashboard rows are no longer being summed.")
+            actions.append("Review debug.marketplace_keys and debug.ad_dedupe to confirm Seller Central and Ads are matched by canonical marketplace.")
         return actions
 
     @staticmethod
@@ -506,10 +520,6 @@ class RevenueReconciliationService:
         bucket["orders"] += RevenueReconciliationService._safe_int(row.orders)
         bucket["clicks"] += RevenueReconciliationService._safe_int(row.clicks)
         bucket["impressions"] += RevenueReconciliationService._safe_int(row.impressions)
-
-    @staticmethod
-    def _market_key(country_code: str | None, marketplace: str | None, currency: str | None) -> tuple[str, str, str]:
-        return (str(country_code or "").upper(), str(marketplace or ""), str(currency or ""))
 
     @staticmethod
     def _dependency_label(paid: float, total: float) -> str:
