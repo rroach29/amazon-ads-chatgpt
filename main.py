@@ -70,6 +70,7 @@ from routes_product_workspace import router as product_workspace_router
 from routes_product_metrics import router as product_metrics_router
 from routes_change_sets import router as change_sets_router
 from routes_amazon_identity_sync import router as amazon_identity_sync_router
+from routes_amazon_catalog_sync import router as amazon_catalog_sync_router
 
 
 app = FastAPI(title="Business OS API")
@@ -149,6 +150,7 @@ app.include_router(product_workspace_router, prefix="/business-os", tags=["Busin
 app.include_router(product_metrics_router, prefix="/business-os", tags=["Business OS Product Metrics"])
 app.include_router(change_sets_router, prefix="/business-os", tags=["Business OS ChangeSets"])
 app.include_router(amazon_identity_sync_router, prefix="/business-os", tags=["Business OS Amazon Identity Sync"])
+app.include_router(amazon_catalog_sync_router, prefix="/business-os", tags=["Business OS Amazon Catalog Sync"])
 
 
 @app.get("/")
