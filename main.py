@@ -48,7 +48,7 @@ from routes_revenue_intelligence import router as revenue_intelligence_router
 from routes_product_intelligence import router as product_intelligence_router
 from routes_sp_api import router as sp_api_router
 from routes_business_registry import router as business_registry_router
-
+from routes_registry_integration import router as registry_integration_router
 
 app = FastAPI(title="Business OS API")
 
@@ -97,7 +97,7 @@ app.include_router(revenue_intelligence_router, prefix="/business-os", tags=["Bu
 app.include_router(product_intelligence_router, prefix="/business-os", tags=["Business OS Product Intelligence"])
 app.include_router(sp_api_router, prefix="/business-os", tags=["Business OS SP-API"] )
 app.include_router(business_registry_router, prefix="/business-os", tags=["Business OS Registry"])
-
+app.include_router(registry_integration_router, prefix="/business-os", tags=["Business OS Registry Integration"])
 
 @app.get("/")
 def root():
