@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlparse
+from urllib.parse import urlencode, urlparse, quote
 from urllib.request import Request, urlopen
 
 
@@ -37,6 +37,7 @@ class SPAPIConfig:
     aws_access_key_id: str | None = None
     aws_secret_access_key: str | None = None
     aws_session_token: str | None = None
+    seller_id: str | None = None
 
     @staticmethod
     def from_env(marketplace: str | None = None) -> "SPAPIConfig":
@@ -65,6 +66,7 @@ class SPAPIConfig:
             aws_access_key_id=os.getenv("SP_API_AWS_ACCESS_KEY_ID") or os.getenv("AWS_ACCESS_KEY_ID"),
             aws_secret_access_key=os.getenv("SP_API_AWS_SECRET_ACCESS_KEY") or os.getenv("AWS_SECRET_ACCESS_KEY"),
             aws_session_token=os.getenv("SP_API_AWS_SESSION_TOKEN") or os.getenv("AWS_SESSION_TOKEN"),
+            seller_id=os.getenv("SP_API_SELLER_ID") or os.getenv("AMAZON_SELLER_ID") or os.getenv("SELLER_ID"),
         )
 
     @property
@@ -101,6 +103,7 @@ class SPAPIConfig:
             "has_aws_access_key_id": bool(self.aws_access_key_id),
             "has_aws_secret_access_key": bool(self.aws_secret_access_key),
             "has_aws_session_token": bool(self.aws_session_token),
+            "has_seller_id": bool(self.seller_id),
             "configured": self.is_configured(),
             "sigv4_configured": self.has_sigv4_credentials(),
         }
@@ -131,6 +134,7 @@ class SPAPIClient:
                 "SP_API_REGION",
                 "SP_API_MARKETPLACE_ID_US",
                 "SP_API_MARKETPLACE_ID_CA",
+                "SP_API_SELLER_ID or AMAZON_SELLER_ID",
             ],
             "sigv4_env": [
                 "SP_API_AWS_ACCESS_KEY_ID or AWS_ACCESS_KEY_ID",
@@ -145,6 +149,7 @@ class SPAPIClient:
                 "sales_and_traffic_report_request",
                 "report_status",
                 "report_document_download",
+                "listings_item_lookup",
             ],
         }
 
@@ -177,6 +182,43 @@ class SPAPIClient:
 
     def get_marketplace_participations(self) -> dict[str, Any]:
         return self._request("GET", "/sellers/v1/marketplaceParticipations")
+
+    def get_listings_item(
+        self,
+        sku: str,
+        marketplace_id: str | None = None,
+        seller_id: str | None = None,
+        included_data: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Fetch one seller listing by SKU from Listings Items API.
+
+        This is the authoritative SKU -> ASIN path for Business OS identity sync.
+        """
+        resolved_seller_id = seller_id or self.config.seller_id
+        if not resolved_seller_id:
+            return {
+                "status": "ERROR",
+                "message": "Seller ID is required for Listings Items API.",
+                "hint": "Set SP_API_SELLER_ID or AMAZON_SELLER_ID in Render, or pass seller_id.",
+                "config": self.config.to_safe_dict(),
+            }
+        resolved_marketplace_id = self._resolve_marketplace_id(marketplace_id or self.config.marketplace_id)
+        if not resolved_marketplace_id:
+            return {
+                "status": "ERROR",
+                "message": "Marketplace ID is required for Listings Items API.",
+                "hint": "Use marketplace=US/CA or marketplace_id=ATVPDKIKX0DER/A2EUQ1WTGCTBG2.",
+            }
+        included = included_data or ["summaries", "attributes", "offers", "fulfillmentAvailability", "issues"]
+        path = f"/listings/2021-08-01/items/{quote(resolved_seller_id, safe='')}/{quote(str(sku), safe='')}"
+        return self._request(
+            "GET",
+            path,
+            query={
+                "marketplaceIds": [resolved_marketplace_id],
+                "includedData": ",".join(included),
+            },
+        )
 
     def request_sales_and_traffic_report(
         self,
