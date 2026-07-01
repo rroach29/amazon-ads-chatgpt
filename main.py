@@ -67,7 +67,7 @@ from routes_mission_control_v2 import router as mission_control_v2_router
 from routes_execution_framework import router as execution_framework_router
 from routes_executive_inbox import router as executive_inbox_router
 from routes_product_workspace import router as product_workspace_router
-
+from routes_product_metrics import router as product_metrics_router
 
 app = FastAPI(title="Business OS API")
 
@@ -143,6 +143,7 @@ app.include_router(mission_control_v2_router, prefix="/business-os", tags=["Busi
 app.include_router(execution_framework_router, prefix="/business-os", tags=["Business OS Execution Framework v0.5"])
 app.include_router(executive_inbox_router, prefix="/business-os", tags=["Business OS Executive Inbox"])
 app.include_router(product_workspace_router, prefix="/business-os", tags=["Business OS Product Workspace"])
+app.include_router(product_metrics_router, prefix="/business-os", tags=["Business OS Product Metrics"])
 
 
 @app.get("/")
