@@ -68,6 +68,7 @@ from routes_execution_framework import router as execution_framework_router
 from routes_executive_inbox import router as executive_inbox_router
 from routes_product_workspace import router as product_workspace_router
 from routes_product_metrics import router as product_metrics_router
+from routes_change_sets import router as change_sets_router
 
 
 app = FastAPI(title="Business OS API")
@@ -82,7 +83,7 @@ app.add_middleware(
     allow_origin_regex=r"https://.*\.onrender\.com",
     allow_credentials=False,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*"]
 )
 
 Base.metadata.create_all(bind=engine)
@@ -145,6 +146,7 @@ app.include_router(execution_framework_router, prefix="/business-os", tags=["Bus
 app.include_router(executive_inbox_router, prefix="/business-os", tags=["Business OS Executive Inbox"])
 app.include_router(product_workspace_router, prefix="/business-os", tags=["Business OS Product Workspace"])
 app.include_router(product_metrics_router, prefix="/business-os", tags=["Business OS Product Metrics"])
+app.include_router(change_sets_router, prefix="/business-os", tags=["Business OS ChangeSets"])
 
 
 @app.get("/")
