@@ -1,4 +1,4 @@
-"""Executive Brain v2.1 — Database Discovery routes."""
+"""Executive Brain v2.1.2 — Database Discovery routes."""
 
 from fastapi import APIRouter, Header
 
@@ -40,3 +40,9 @@ def discovery_database_relationships(x_api_key: str = Header(...)):
 def discovery_database_linking_diagnostics(x_api_key: str = Header(...)):
     verify_key(x_api_key)
     return DatabaseDiscoveryService.linking_diagnostics()
+
+
+@router.get("/discovery/database/amazon-scope")
+def discovery_database_amazon_scope(x_api_key: str = Header(...)):
+    verify_key(x_api_key)
+    return DatabaseDiscoveryService.amazon_scope()
