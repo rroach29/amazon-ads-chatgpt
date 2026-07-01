@@ -1,4 +1,10 @@
-"""Business OS v0.6.4 — Product Metrics Service."""
+"""Business OS v0.6.5 — Product Metrics Service.
+
+Adds Product Performance Mix:
+- Uses advertising rows when available.
+- Detects Seller/SP-API product sales tables dynamically when present.
+- Computes total, paid, and organic sales mix without requiring a migration.
+"""
 
 from __future__ import annotations
 
@@ -12,10 +18,17 @@ from business_registry.models import MasterProduct
 
 
 class ProductMetricsService:
-    version = "business-os-0.6.4"
+    version = "business-os-0.6.5"
 
     CAMPAIGN_TABLE = "campaign_daily_details"
     SEARCH_TABLE = "search_term_daily_details"
+    SELLER_TABLE_CANDIDATES = [
+        "seller_product_daily_details",
+        "seller_sales_daily_details",
+        "sp_api_product_daily_details",
+        "product_sales_daily_details",
+        "revenue_daily_details",
+    ]
 
     @classmethod
     def product_metrics(cls, master_product_id: str, days: int = 30) -> dict[str, Any]:
@@ -27,24 +40,38 @@ class ProductMetricsService:
 
             ad_rows = cls._rows_for_product(db, cls.CAMPAIGN_TABLE, master_product_id, days)
             search_rows = cls._rows_for_product(db, cls.SEARCH_TABLE, master_product_id, days)
+            seller_rows, seller_table = cls._seller_rows_for_product(db, master_product_id, days)
 
             ad_totals = cls._totals(ad_rows)
             search_totals = cls._totals(search_rows)
+            seller_totals = cls._seller_totals(seller_rows)
 
             spend = ad_totals["spend"] if ad_rows else search_totals["spend"]
             ad_sales = ad_totals["sales"] if ad_rows else search_totals["sales"]
-            sales = ad_sales
-            orders = ad_totals["orders"] if ad_rows else search_totals["orders"]
+            ad_orders = ad_totals["orders"] if ad_rows else search_totals["orders"]
             clicks = ad_totals["clicks"] if ad_rows else search_totals["clicks"]
             impressions = ad_totals["impressions"] if ad_rows else search_totals["impressions"]
+
+            seller_sales = seller_totals["sales"]
+            seller_orders = seller_totals["orders"]
+            seller_units = seller_totals["units"]
+
+            has_seller_sales = seller_sales > 0 or seller_orders > 0 or seller_units > 0
+            sales = seller_sales if has_seller_sales else ad_sales
+            orders = seller_orders if seller_orders > 0 else ad_orders
+            organic_sales = max(sales - ad_sales, 0.0) if has_seller_sales else None
+            organic_orders = max(seller_orders - ad_orders, 0.0) if seller_orders > 0 else None
 
             acos = spend / ad_sales if ad_sales else None
             roas = ad_sales / spend if spend else None
             ctr = clicks / impressions if impressions else None
-            conversion_rate = orders / clicks if clicks else None
+            conversion_rate = ad_orders / clicks if clicks else None
             tacos = spend / sales if sales else None
+            paid_sales_share = ad_sales / sales if sales else None
+            organic_sales_share = organic_sales / sales if organic_sales is not None and sales else None
 
             trend = cls._trend(db, cls.CAMPAIGN_TABLE, master_product_id, days) if cls._table_ready(cls.CAMPAIGN_TABLE) else []
+            mix_trend = cls._performance_mix_trend(db, master_product_id, days)
 
             return {
                 "status": "OK",
@@ -54,7 +81,7 @@ class ProductMetricsService:
                 "window_days": days,
                 "metrics": {
                     "sales_30d": round(sales, 2),
-                    "organic_sales_30d": None,
+                    "organic_sales_30d": round(organic_sales, 2) if organic_sales is not None else None,
                     "ad_sales_30d": round(ad_sales, 2),
                     "spend_30d": round(spend, 2),
                     "acos": round(acos, 4) if acos is not None else None,
@@ -63,26 +90,45 @@ class ProductMetricsService:
                     "tacos_pct": round(tacos * 100, 2) if tacos is not None else None,
                     "roas": round(roas, 2) if roas is not None else None,
                     "orders_30d": int(orders),
+                    "ad_orders_30d": int(ad_orders),
+                    "organic_orders_30d": int(organic_orders) if organic_orders is not None else None,
+                    "seller_units_30d": int(seller_units) if seller_units else None,
                     "clicks_30d": int(clicks),
                     "impressions_30d": int(impressions),
                     "ctr": round(ctr, 4) if ctr is not None else None,
                     "ctr_pct": round(ctr * 100, 2) if ctr is not None else None,
                     "conversion_rate": round(conversion_rate, 4) if conversion_rate is not None else None,
                     "conversion_rate_pct": round(conversion_rate * 100, 2) if conversion_rate is not None else None,
+                    "paid_sales_share": round(paid_sales_share, 4) if paid_sales_share is not None else None,
+                    "paid_sales_share_pct": round(paid_sales_share * 100, 2) if paid_sales_share is not None else None,
+                    "organic_sales_share": round(organic_sales_share, 4) if organic_sales_share is not None else None,
+                    "organic_sales_share_pct": round(organic_sales_share * 100, 2) if organic_sales_share is not None else None,
+                    "advertising_dependency_pct": round(paid_sales_share * 100, 2) if paid_sales_share is not None else None,
                     "profit_30d": None,
                     "margin_pct": None,
+                },
+                "performance_mix": {
+                    "total_sales_30d": round(sales, 2),
+                    "ad_sales_30d": round(ad_sales, 2),
+                    "organic_sales_30d": round(organic_sales, 2) if organic_sales is not None else None,
+                    "paid_sales_share_pct": round(paid_sales_share * 100, 2) if paid_sales_share is not None else None,
+                    "organic_sales_share_pct": round(organic_sales_share * 100, 2) if organic_sales_share is not None else None,
+                    "advertising_dependency_pct": round(paid_sales_share * 100, 2) if paid_sales_share is not None else None,
+                    "seller_sales_available": has_seller_sales,
+                    "seller_source_table": seller_table,
+                    "interpretation": cls._mix_interpretation(has_seller_sales, paid_sales_share, organic_sales_share),
                 },
                 "data_quality": {
                     "campaign_rows": len(ad_rows),
                     "search_rows": len(search_rows),
-                    "organic_sales_available": False,
+                    "seller_rows": len(seller_rows),
+                    "seller_source_table": seller_table,
+                    "organic_sales_available": has_seller_sales,
                     "profit_available": False,
-                    "notes": [
-                        "Organic sales require Seller Central integration.",
-                        "Profit requires COGS, fees, shipping, and refunds.",
-                    ],
+                    "notes": cls._data_quality_notes(has_seller_sales),
                 },
                 "trend": trend,
+                "performance_mix_trend": mix_trend,
             }
         finally:
             db.close()
@@ -103,7 +149,10 @@ class ProductMetricsService:
                     })
 
             spend = sum(r.get("spend_30d") or 0 for r in rows)
-            sales = sum(r.get("ad_sales_30d") or 0 for r in rows)
+            total_sales = sum(r.get("sales_30d") or 0 for r in rows)
+            ad_sales = sum(r.get("ad_sales_30d") or 0 for r in rows)
+            organic_sales_values = [r.get("organic_sales_30d") for r in rows if r.get("organic_sales_30d") is not None]
+            organic_sales = sum(organic_sales_values) if organic_sales_values else None
             orders = sum(r.get("orders_30d") or 0 for r in rows)
 
             return {
@@ -111,11 +160,16 @@ class ProductMetricsService:
                 "version": cls.version,
                 "count": len(rows),
                 "summary": {
-                    "sales_30d": round(sales, 2),
-                    "ad_sales_30d": round(sales, 2),
+                    "sales_30d": round(total_sales, 2),
+                    "ad_sales_30d": round(ad_sales, 2),
+                    "organic_sales_30d": round(organic_sales, 2) if organic_sales is not None else None,
                     "spend_30d": round(spend, 2),
                     "orders_30d": int(orders),
-                    "portfolio_acos_pct": round((spend / sales) * 100, 2) if sales else None,
+                    "portfolio_acos_pct": round((spend / ad_sales) * 100, 2) if ad_sales else None,
+                    "portfolio_tacos_pct": round((spend / total_sales) * 100, 2) if total_sales else None,
+                    "paid_sales_share_pct": round((ad_sales / total_sales) * 100, 2) if total_sales else None,
+                    "organic_sales_share_pct": round((organic_sales / total_sales) * 100, 2) if organic_sales is not None and total_sales else None,
+                    "products_with_seller_sales": len([r for r in rows if r.get("organic_sales_30d") is not None]),
                 },
                 "products": rows,
             }
@@ -142,6 +196,14 @@ class ProductMetricsService:
         return [dict(row) for row in db.execute(text(sql), params).mappings().all()]
 
     @classmethod
+    def _seller_rows_for_product(cls, db, master_product_id: str, days: int) -> tuple[list[dict[str, Any]], str | None]:
+        for table in cls.SELLER_TABLE_CANDIDATES:
+            rows = cls._rows_for_product(db, table, master_product_id, days)
+            if rows:
+                return rows, table
+        return [], None
+
+    @classmethod
     def _totals(cls, rows: list[dict[str, Any]]) -> dict[str, float]:
         totals = {"spend": 0.0, "sales": 0.0, "orders": 0.0, "clicks": 0.0, "impressions": 0.0}
         for row in rows:
@@ -151,6 +213,22 @@ class ProductMetricsService:
             totals["orders"] += cls._num(cls._first(row, raw, ["orders", "purchases7d", "attributedConversions7d", "conversions"]))
             totals["clicks"] += cls._num(cls._first(row, raw, ["clicks"]))
             totals["impressions"] += cls._num(cls._first(row, raw, ["impressions"]))
+        return totals
+
+    @classmethod
+    def _seller_totals(cls, rows: list[dict[str, Any]]) -> dict[str, float]:
+        totals = {"sales": 0.0, "orders": 0.0, "units": 0.0}
+        for row in rows:
+            raw = row.get("raw") if isinstance(row.get("raw"), dict) else {}
+            totals["sales"] += cls._num(cls._first(row, raw, [
+                "ordered_product_sales", "orderedProductSales", "total_sales", "totalSales", "sales", "revenue", "gross_sales"
+            ]))
+            totals["orders"] += cls._num(cls._first(row, raw, [
+                "orders", "total_orders", "order_count", "ordered_units", "orderedUnits", "units_ordered"
+            ]))
+            totals["units"] += cls._num(cls._first(row, raw, [
+                "units", "units_ordered", "ordered_units", "orderedUnits", "quantity"
+            ]))
         return totals
 
     @classmethod
@@ -180,6 +258,65 @@ class ProductMetricsService:
             output.append(item)
         return output
 
+    @classmethod
+    def _performance_mix_trend(cls, db, master_product_id: str, days: int) -> list[dict[str, Any]]:
+        ad_trend = cls._trend(db, cls.CAMPAIGN_TABLE, master_product_id, days) if cls._table_ready(cls.CAMPAIGN_TABLE) else []
+        seller_rows, _seller_table = cls._seller_rows_for_product(db, master_product_id, days)
+        if not seller_rows:
+            return []
+
+        seller_by_date: dict[str, float] = {}
+        seller_cols = list(seller_rows[0].keys()) if seller_rows else []
+        seller_date_col = cls._date_column(seller_cols)
+        for row in seller_rows:
+            if not seller_date_col:
+                continue
+            day = str(row.get(seller_date_col))[:10]
+            raw = row.get("raw") if isinstance(row.get("raw"), dict) else {}
+            seller_by_date[day] = seller_by_date.get(day, 0.0) + cls._num(cls._first(row, raw, [
+                "ordered_product_sales", "orderedProductSales", "total_sales", "totalSales", "sales", "revenue", "gross_sales"
+            ]))
+
+        ad_by_date = {row.get("date"): row for row in ad_trend}
+        output = []
+        for day in sorted(set(seller_by_date) | set(ad_by_date)):
+            total_sales = seller_by_date.get(day) or ad_by_date.get(day, {}).get("sales") or 0.0
+            ad_sales = ad_by_date.get(day, {}).get("sales") or 0.0
+            organic_sales = max(total_sales - ad_sales, 0.0) if total_sales else None
+            output.append({
+                "date": day,
+                "sales": round(total_sales, 2),
+                "ad_sales": round(ad_sales, 2),
+                "organic_sales": round(organic_sales, 2) if organic_sales is not None else None,
+                "paid_sales_share_pct": round((ad_sales / total_sales) * 100, 2) if total_sales else None,
+                "organic_sales_share_pct": round((organic_sales / total_sales) * 100, 2) if organic_sales is not None and total_sales else None,
+            })
+        return output
+
+    @staticmethod
+    def _mix_interpretation(has_seller_sales: bool, paid_share: float | None, organic_share: float | None) -> str:
+        if not has_seller_sales:
+            return "Seller Central/SP-API product sales are not available yet, so total sales currently equal attributed ad sales. Organic-vs-paid split is not computed."
+        if paid_share is None:
+            return "Seller sales are available, but paid sales share could not be calculated."
+        if paid_share >= 0.8:
+            return "This product appears highly advertising-dependent. Prioritize organic rank, listing conversion, and exact-match efficiency."
+        if paid_share >= 0.45:
+            return "This product has a balanced paid/organic mix. Optimize ads while continuing to improve organic visibility."
+        return "This product appears organically strong relative to ad-attributed sales. Protect ranking and use ads selectively for growth."
+
+    @staticmethod
+    def _data_quality_notes(has_seller_sales: bool) -> list[str]:
+        notes = []
+        if has_seller_sales:
+            notes.append("Organic sales are estimated as Seller/SP-API total sales minus attributed ad sales.")
+            notes.append("TACOS uses Seller/SP-API total sales when available.")
+        else:
+            notes.append("Organic sales require Seller Central/SP-API product sales ingestion.")
+            notes.append("Until seller sales are available, sales_30d is ad-attributed sales only.")
+        notes.append("Profit requires COGS, fees, shipping, and refunds.")
+        return notes
+
     @staticmethod
     def _table_ready(table: str) -> bool:
         try:
@@ -196,7 +333,7 @@ class ProductMetricsService:
 
     @staticmethod
     def _date_column(cols: list[str]) -> str | None:
-        for c in ["date", "report_date", "startDate", "created_at"]:
+        for c in ["date", "report_date", "startDate", "created_at", "snapshot_date"]:
             if c in cols:
                 return c
         return None
