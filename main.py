@@ -61,11 +61,26 @@ from routes_admin_portal import router as admin_portal_router
 from routes_mission_control_v030 import router as mission_control_v030_router
 from routes_product_advertising import router as product_advertising_router
 from routes_product_search import router as product_search_router
+from routes_mission_control_v2 import router as mission_control_v2_router
 
 
 app = FastAPI(title="Business OS API")
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://localhost:4173", "https://amazon-ads-chatgpt.onrender.com"], allow_origin_regex=r"https://.*\.onrender\.com", allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:4173",
+        "https://amazon-ads-chatgpt.onrender.com",
+    ],
+    allow_origin_regex=r"https://.*\.onrender\.com",
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 Base.metadata.create_all(bind=engine)
+
 app.include_router(dashboard_router, prefix="/dashboard", tags=["Dashboard"])
 app.include_router(reports_router, prefix="/reports", tags=["Reports"])
 app.include_router(scheduler_router, prefix="/scheduler", tags=["Scheduler"])
@@ -119,10 +134,20 @@ app.include_router(admin_portal_router, prefix="/business-os", tags=["Business O
 app.include_router(mission_control_v030_router, prefix="/business-os", tags=["Business OS Mission Control v0.3"])
 app.include_router(product_advertising_router, prefix="/business-os", tags=["Business OS Product Advertising Intelligence"])
 app.include_router(product_search_router, prefix="/business-os", tags=["Business OS Product Search Intelligence"])
+app.include_router(mission_control_v2_router, prefix="/business-os", tags=["Business OS Mission Control v2"])
 
 
 @app.get("/")
-def root(): return {"status": "ok", "message": "Business OS API is running"}
+def root():
+    return {
+        "status": "ok",
+        "message": "Business OS API is running",
+    }
+
+
 @app.get("/health")
-def health(): return {"status": "ok"}
+def health():
+    return {"status": "ok"}
+
+
 start_scheduler()
