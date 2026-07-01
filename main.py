@@ -52,6 +52,7 @@ from routes_business_registry import router as business_registry_router
 from routes_registry_integration import router as registry_integration_router
 from routes_platform import router as platform_router
 from routes_product_genome import router as product_genome_router
+from routes_registry_linking import router as registry_linking_router
 
 
 app = FastAPI(title="Business OS API")
@@ -104,6 +105,7 @@ app.include_router(business_registry_router, prefix="/business-os", tags=["Busin
 app.include_router(registry_integration_router, prefix="/business-os", tags=["Business OS Registry Integration"])
 app.include_router(platform_router, prefix="/business-os", tags=["Business OS Platform"])
 app.include_router(product_genome_router, prefix="/business-os", tags=["Executive Brain Product Genome"])
+app.include_router(registry_linking_router, prefix="/business-os", tags=["Business OS Registry Linking"])
 
 
 @app.get("/")
