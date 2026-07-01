@@ -6,6 +6,7 @@ from models import Base
 from execution_models import ExecutionJob, ExecutionResult
 from business_registry.models import MasterProduct, ProductChannel, BusinessEvent, ProductScore
 from business_os.executive.genome.models import ProductGenome
+from business_os.mission_control.models import MissionControlDecision, BusinessObjective
 from routes_dashboard import router as dashboard_router
 from routes_reports import router as reports_router
 from routes_scheduler import router as scheduler_router
@@ -35,7 +36,7 @@ from routes_report_pipeline import router as report_pipeline_router
 from routes_data_context import router as data_context_router
 from routes_analytics_health import router as analytics_health_router
 from routes_business_plans import router as business_plans_router
-from routes_mission_control import router as mission_control_router
+from routes_mission_control import router as old_mission_control_router
 from routes_optimization import router as optimization_router
 from routes_outcomes import router as outcomes_router
 from routes_knowledge_graph import router as knowledge_graph_router
@@ -57,14 +58,11 @@ from routes_registry_linking import router as registry_linking_router
 from routes_database_discovery import router as database_discovery_router
 from routes_registry_manager import router as registry_manager_router
 from routes_admin_portal import router as admin_portal_router
+from routes_mission_control_v030 import router as mission_control_v030_router
 
 
 app = FastAPI(title="Business OS API")
 
-# Business OS Frontend CORS
-#
-# This allows the React Static Site on Render to call the FastAPI backend.
-# Regex is used because Render preview/static-site URLs can include generated suffixes.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -108,7 +106,7 @@ app.include_router(report_pipeline_router, prefix="/business-os", tags=["Busines
 app.include_router(data_context_router, prefix="/business-os", tags=["Business OS Data Context"])
 app.include_router(analytics_health_router, prefix="/business-os", tags=["Business OS Analytics Health"])
 app.include_router(business_plans_router, prefix="/business-os", tags=["Business OS Plans"])
-app.include_router(mission_control_router, prefix="/business-os", tags=["Business OS Mission Control"])
+app.include_router(old_mission_control_router, prefix="/business-os", tags=["Business OS Mission Control Legacy"])
 app.include_router(optimization_router, prefix="/business-os", tags=["Business OS Optimization Platform"])
 app.include_router(outcomes_router, prefix="/business-os", tags=["Business OS Outcome Intelligence"])
 app.include_router(knowledge_graph_router, prefix="/business-os", tags=["Business OS Knowledge Graph"])
@@ -130,6 +128,7 @@ app.include_router(registry_linking_router, prefix="/business-os", tags=["Busine
 app.include_router(database_discovery_router, prefix="/business-os", tags=["Business OS Database Discovery"])
 app.include_router(registry_manager_router, prefix="/business-os", tags=["Business OS Registry Manager"])
 app.include_router(admin_portal_router, prefix="/business-os", tags=["Business OS Admin Portal"])
+app.include_router(mission_control_v030_router, prefix="/business-os", tags=["Business OS Mission Control v0.3"])
 
 
 @app.get("/")
