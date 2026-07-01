@@ -1,1 +1,1 @@
-"""Business OS Platform v1.0."""
+"""Executive Brain v2.0."""
