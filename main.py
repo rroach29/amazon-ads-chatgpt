@@ -55,6 +55,7 @@ from routes_product_genome import router as product_genome_router
 from routes_registry_linking import router as registry_linking_router
 from routes_database_discovery import router as database_discovery_router
 from routes_registry_manager import router as registry_manager_router
+from routes_admin_portal import router as admin_portal_router
 
 
 app = FastAPI(title="Business OS API")
@@ -110,6 +111,7 @@ app.include_router(product_genome_router, prefix="/business-os", tags=["Executiv
 app.include_router(registry_linking_router, prefix="/business-os", tags=["Business OS Registry Linking"])
 app.include_router(database_discovery_router, prefix="/business-os", tags=["Business OS Database Discovery"])
 app.include_router(registry_manager_router, prefix="/business-os", tags=["Business OS Registry Manager"])
+app.include_router(admin_portal_router, prefix="/business-os", tags=["Business OS Admin Portal"])
 
 
 @app.get("/")
