@@ -1,1 +1,1 @@
-"""Registry Linking Engine."""
+"""Business Registry Manager."""
