@@ -7,6 +7,8 @@ from execution_models import ExecutionJob, ExecutionResult
 from business_registry.models import MasterProduct, ProductChannel, BusinessEvent, ProductScore
 from business_os.executive.genome.models import ProductGenome
 from business_os.mission_control.models import MissionControlDecision, BusinessObjective
+from business_os.execution_framework.models import ExecutionPlan, ExecutionStep, ExecutionResult as BusinessOSExecutionResult
+
 from routes_dashboard import router as dashboard_router
 from routes_reports import router as reports_router
 from routes_scheduler import router as scheduler_router
@@ -62,6 +64,8 @@ from routes_mission_control_v030 import router as mission_control_v030_router
 from routes_product_advertising import router as product_advertising_router
 from routes_product_search import router as product_search_router
 from routes_mission_control_v2 import router as mission_control_v2_router
+from routes_execution_framework import router as execution_framework_router
+from routes_executive_inbox import router as executive_inbox_router
 
 
 app = FastAPI(title="Business OS API")
@@ -135,6 +139,8 @@ app.include_router(mission_control_v030_router, prefix="/business-os", tags=["Bu
 app.include_router(product_advertising_router, prefix="/business-os", tags=["Business OS Product Advertising Intelligence"])
 app.include_router(product_search_router, prefix="/business-os", tags=["Business OS Product Search Intelligence"])
 app.include_router(mission_control_v2_router, prefix="/business-os", tags=["Business OS Mission Control v2"])
+app.include_router(execution_framework_router, prefix="/business-os", tags=["Business OS Execution Framework v0.5"])
+app.include_router(executive_inbox_router, prefix="/business-os", tags=["Business OS Executive Inbox"])
 
 
 @app.get("/")
