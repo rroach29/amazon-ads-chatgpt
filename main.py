@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from database import engine
 from models import Base
@@ -59,6 +60,23 @@ from routes_admin_portal import router as admin_portal_router
 
 
 app = FastAPI(title="Business OS API")
+
+# Business OS Frontend CORS
+#
+# This allows the React Static Site on Render to call the FastAPI backend.
+# Regex is used because Render preview/static-site URLs can include generated suffixes.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:4173",
+        "https://amazon-ads-chatgpt.onrender.com",
+    ],
+    allow_origin_regex=r"https://.*\.onrender\.com",
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 Base.metadata.create_all(bind=engine)
 
