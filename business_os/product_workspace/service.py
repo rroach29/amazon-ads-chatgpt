@@ -1,7 +1,15 @@
+"""Business OS v0.6.4 — Product Workspace Dashboard.
+
+Includes:
+- Product Dashboard output
+- Product Metrics integration
+- v0.6.2 defensive ProductGenome/ProductChannel serializers
+"""
 
 from __future__ import annotations
 
 from typing import Any
+
 from sqlalchemy import desc
 
 from database import SessionLocal
@@ -23,7 +31,7 @@ except Exception:
 
 
 class ProductWorkspaceService:
-    version = "business-os-0.6.3"
+    version = "business-os-0.6.4"
 
     @classmethod
     def portfolio(cls, limit: int = 250, query: str | None = None) -> dict[str, Any]:
@@ -41,7 +49,12 @@ class ProductWorkspaceService:
 
             products = q.order_by(MasterProduct.name).limit(max(1, min(limit, 500))).all()
             items = [cls._portfolio_item(db, product) for product in products]
-            items.sort(key=lambda item: (-(item.get("open_decisions") or 0), -(item.get("sales_30d") or 0), item.get("product_name") or ""))
+
+            items.sort(key=lambda item: (
+                -(item.get("open_decisions") or 0),
+                -(item.get("ad_sales_30d") or 0),
+                item.get("product_name") or "",
+            ))
 
             return {
                 "status": "OK",
@@ -61,7 +74,7 @@ class ProductWorkspaceService:
             if not product:
                 return {"status": "NOT_FOUND", "version": cls.version, "master_product_id": master_product_id}
 
-            channels = db.query(ProductChannel).filter(ProductChannel.master_product_id == master_product_id).all()
+            channels = db.query(ProductChannel).filter(ProductChannel.master_product_id == master_product_id).order_by(ProductChannel.channel, ProductChannel.marketplace).all()
             genome = db.query(ProductGenome).filter(ProductGenome.master_product_id == master_product_id).first()
             decisions = db.query(MissionControlDecision).filter(MissionControlDecision.master_product_id == master_product_id).order_by(desc(MissionControlDecision.created_at)).limit(50).all()
             plans = db.query(ExecutionPlan).filter(ExecutionPlan.master_product_id == master_product_id).order_by(desc(ExecutionPlan.created_at)).limit(50).all()
@@ -70,17 +83,17 @@ class ProductWorkspaceService:
 
             advertising = cls._advertising(master_product_id)
             search = cls._search(master_product_id)
-            metrics = ProductMetricsService.metrics(master_product_id=master_product_id, days=30).get("metrics", {})
-            trend = ProductMetricsService.trend(master_product_id=master_product_id, days=30).get("trend", [])
+            metrics_payload = ProductMetricsService.product_metrics(master_product_id)
+            metrics = metrics_payload.get("metrics", {}) if metrics_payload.get("status") == "OK" else {}
 
             return {
                 "status": "OK",
                 "version": cls.version,
                 "product": cls._product(product),
+                "dashboard": cls._dashboard(product, genome, advertising, search, decisions, plans, metrics),
+                "metrics": metrics_payload,
                 "channels": [cls._channel(row) for row in channels],
                 "genome": cls._genome(genome),
-                "metrics": metrics,
-                "trend": trend,
                 "advertising": advertising,
                 "search": search,
                 "mission_control": {
@@ -93,7 +106,7 @@ class ProductWorkspaceService:
                     "history": [cls._result(row) for row in results],
                 },
                 "timeline": [cls._event(row) for row in events],
-                "workspace_summary": cls._workspace_summary(genome, advertising, search, metrics, decisions, plans),
+                "workspace_summary": cls._workspace_summary(product, genome, advertising, search, decisions, plans, metrics),
             }
         finally:
             db.close()
@@ -120,12 +133,39 @@ class ProductWorkspaceService:
             db.close()
 
     @classmethod
+    def _dashboard(cls, product, genome, advertising, search, decisions, plans, metrics):
+        scores = cls._genome_scores(genome)
+        pending = [d for d in decisions if d.status == "Pending"]
+        active_plans = [p for p in plans if p.status in ["Planned", "Ready", "Approved", "Running"]]
+        completed = [p for p in plans if p.status in ["DryRunComplete", "Completed", "Executed"]]
+
+        return {
+            "health": scores.get("product_health"),
+            "sales_30d": metrics.get("sales_30d"),
+            "ad_sales_30d": metrics.get("ad_sales_30d"),
+            "spend_30d": metrics.get("spend_30d"),
+            "acos_pct": metrics.get("acos_pct"),
+            "tacos_pct": metrics.get("tacos_pct"),
+            "orders_30d": metrics.get("orders_30d"),
+            "conversion_rate_pct": metrics.get("conversion_rate_pct"),
+            "profit_30d": metrics.get("profit_30d"),
+            "margin_pct": metrics.get("margin_pct"),
+            "search_health": search.get("search_health") if isinstance(search, dict) else None,
+            "advertising_health": advertising.get("advertising_health") if isinstance(advertising, dict) else None,
+            "open_tasks": len(pending),
+            "active_execution_plans": len(active_plans),
+            "completed_execution_plans": len(completed),
+            "top_task": pending[0].title if pending else None,
+        }
+
+    @classmethod
     def _portfolio_item(cls, db, product: MasterProduct) -> dict[str, Any]:
         channels = db.query(ProductChannel).filter(ProductChannel.master_product_id == product.master_product_id).all()
         genome = db.query(ProductGenome).filter(ProductGenome.master_product_id == product.master_product_id).first()
         pending = db.query(MissionControlDecision).filter(MissionControlDecision.master_product_id == product.master_product_id).filter(MissionControlDecision.status == "Pending").count()
         plans = db.query(ExecutionPlan).filter(ExecutionPlan.master_product_id == product.master_product_id).count()
-        metrics = ProductMetricsService.metrics(product.master_product_id).get("metrics", {})
+        metric_result = ProductMetricsService.product_metrics(product.master_product_id)
+        metrics = metric_result.get("metrics", {}) if metric_result.get("status") == "OK" else {}
 
         channel_names = sorted(set([cls._safe_get(c, "channel") for c in channels if cls._safe_get(c, "channel")]))
         marketplaces = sorted(set([cls._safe_get(c, "marketplace") for c in channels if cls._safe_get(c, "marketplace")]))
@@ -143,13 +183,10 @@ class ProductWorkspaceService:
             "marketplaces": marketplaces,
             "channel_count": len(channels),
             "health": scores.get("product_health"),
-            "sales_30d": metrics.get("sales_30d"),
-            "spend_30d": metrics.get("spend_30d"),
             "ad_sales_30d": metrics.get("ad_sales_30d"),
-            "organic_sales_30d": metrics.get("organic_sales_30d"),
+            "spend_30d": metrics.get("spend_30d"),
             "acos_pct": metrics.get("acos_pct"),
-            "tacos_pct": metrics.get("tacos_pct"),
-            "organic_ratio_pct": metrics.get("organic_ratio_pct"),
+            "orders_30d": metrics.get("orders_30d"),
             "open_decisions": pending,
             "execution_plans": plans,
         }
@@ -157,40 +194,36 @@ class ProductWorkspaceService:
     @staticmethod
     def _portfolio_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
         with_health = [item for item in items if item.get("health") is not None]
+        avg_health = round(sum(item["health"] for item in with_health) / len(with_health)) if with_health else None
+        spend = sum(i.get("spend_30d") or 0 for i in items)
+        sales = sum(i.get("ad_sales_30d") or 0 for i in items)
         return {
             "products": len(items),
-            "average_health": round(sum(i["health"] for i in with_health) / len(with_health)) if with_health else None,
-            "sales_30d": round(sum(i.get("sales_30d") or 0 for i in items), 2),
-            "ad_sales_30d": round(sum(i.get("ad_sales_30d") or 0 for i in items), 2),
-            "spend_30d": round(sum(i.get("spend_30d") or 0 for i in items), 2),
+            "average_health": avg_health,
+            "ad_sales_30d": round(sales, 2),
+            "spend_30d": round(spend, 2),
+            "portfolio_acos_pct": round((spend / sales) * 100, 2) if sales else None,
             "products_with_open_decisions": len([i for i in items if (i.get("open_decisions") or 0) > 0]),
             "total_open_decisions": sum(i.get("open_decisions") or 0 for i in items),
             "products_with_execution_plans": len([i for i in items if (i.get("execution_plans") or 0) > 0]),
         }
 
     @classmethod
-    def _workspace_summary(cls, genome, advertising, search, metrics, decisions, plans) -> dict[str, Any]:
+    def _workspace_summary(cls, product, genome, advertising, search, decisions, plans, metrics):
         scores = cls._genome_scores(genome)
-        pending = [d for d in decisions if d.status == "Pending"]
-        recommendation = pending[0].title if pending else None
-        if not recommendation and isinstance(search, dict) and search.get("recommendations"):
-            recommendation = search["recommendations"][0].get("title")
-        if not recommendation and isinstance(advertising, dict) and advertising.get("recommendations"):
-            recommendation = advertising["recommendations"][0].get("title")
         return {
             "health": scores.get("product_health"),
-            "sales_30d": metrics.get("sales_30d"),
-            "organic_sales_30d": metrics.get("organic_sales_30d"),
-            "ad_sales_30d": metrics.get("ad_sales_30d"),
-            "spend_30d": metrics.get("spend_30d"),
-            "acos_pct": metrics.get("acos_pct"),
-            "tacos_pct": metrics.get("tacos_pct"),
-            "organic_ratio_pct": metrics.get("organic_ratio_pct"),
+            "organic_strength": scores.get("organic_strength"),
+            "advertising_dependency": scores.get("advertising_dependency_index"),
+            "profitability": scores.get("profitability"),
             "advertising_health": advertising.get("advertising_health") if isinstance(advertising, dict) else None,
             "search_health": search.get("search_health") if isinstance(search, dict) else None,
-            "active_tasks": len(pending),
+            "active_tasks": len([d for d in decisions if d.status == "Pending"]),
             "active_execution_plans": len([p for p in plans if p.status in ["Planned", "Ready", "Approved", "Running"]]),
-            "top_recommendation": recommendation,
+            "top_recommendation": decisions[0].title if decisions else None,
+            "sales_30d": metrics.get("sales_30d"),
+            "spend_30d": metrics.get("spend_30d"),
+            "acos_pct": metrics.get("acos_pct"),
         }
 
     @staticmethod
@@ -201,12 +234,18 @@ class ProductWorkspaceService:
             return default
 
     @classmethod
-    def _genome_scores(cls, genome: ProductGenome | None) -> dict[str, Any]:
+    def _genome_scores(cls, genome):
         if not genome:
             return {}
         scores = cls._safe_get(genome, "scores")
         if isinstance(scores, dict):
-            return scores
+            return {
+                "product_health": scores.get("product_health"),
+                "organic_strength": scores.get("organic_strength"),
+                "advertising_dependency_index": scores.get("advertising_dependency_index"),
+                "profitability": scores.get("profitability"),
+                "confidence": scores.get("confidence"),
+            }
         aliases = {
             "product_health": ["product_health", "health_score", "health"],
             "organic_strength": ["organic_strength", "organic_score"],
@@ -225,65 +264,48 @@ class ProductWorkspaceService:
         return output
 
     @classmethod
-    def _genome(cls, row: ProductGenome | None) -> dict[str, Any] | None:
+    def _genome_strategy(cls, genome):
+        if not genome:
+            return {}
+        strategy = cls._safe_get(genome, "strategy")
+        if isinstance(strategy, dict):
+            return strategy
+        return {"archetype": cls._safe_get(genome, "archetype"), "objective": cls._safe_get(genome, "objective"), "strategy": cls._safe_get(genome, "recommended_strategy")}
+
+    @classmethod
+    def _genome(cls, row):
         if not row:
             return None
         created_at = cls._safe_get(row, "created_at")
         updated_at = cls._safe_get(row, "updated_at")
-        strategy = cls._safe_get(row, "strategy")
         signals = cls._safe_get(row, "signals")
-        recommendations = cls._safe_get(row, "recommendations")
+        recs = cls._safe_get(row, "recommendations")
         return {
             "master_product_id": cls._safe_get(row, "master_product_id"),
             "scores": cls._genome_scores(row),
-            "strategy": strategy if isinstance(strategy, dict) else {},
+            "strategy": cls._genome_strategy(row),
             "signals": signals if isinstance(signals, dict) else {},
-            "recommendations": recommendations if isinstance(recommendations, list) else [],
+            "recommendations": recs if isinstance(recs, list) else [],
             "created_at": created_at.isoformat() if created_at else None,
             "updated_at": updated_at.isoformat() if updated_at else None,
         }
 
-    @classmethod
-    def _channel(cls, row: ProductChannel) -> dict[str, Any]:
-        raw = cls._safe_get(row, "raw")
-        raw = raw if isinstance(raw, dict) else {}
-        def first_attr_or_raw(*names):
-            for name in names:
-                value = cls._safe_get(row, name)
-                if value is not None:
-                    return value
-                if raw.get(name) is not None:
-                    return raw.get(name)
-            return None
-        return {
-            "id": cls._safe_get(row, "id"),
-            "master_product_id": cls._safe_get(row, "master_product_id"),
-            "channel": first_attr_or_raw("channel", "platform"),
-            "marketplace": first_attr_or_raw("marketplace", "marketplace_id", "country_code"),
-            "sku": first_attr_or_raw("sku", "seller_sku", "merchant_sku"),
-            "asin": first_attr_or_raw("asin", "amazon_asin"),
-            "listing_id": first_attr_or_raw("listing_id", "etsy_listing_id", "shopify_product_id", "external_id"),
-            "product_url": first_attr_or_raw("product_url", "url", "listing_url"),
-            "status": first_attr_or_raw("status", "state") or "unknown",
-            "raw": raw,
-        }
-
     @staticmethod
-    def _advertising(master_product_id: str) -> dict[str, Any]:
+    def _advertising(master_product_id: str):
         if not ProductAdvertisingIntelligenceService:
             return {"available": False, "reason": "Product Advertising Intelligence not installed"}
         result = ProductAdvertisingIntelligenceService.product_advertising(master_product_id)
         return result.get("advertising", result)
 
     @staticmethod
-    def _search(master_product_id: str) -> dict[str, Any]:
+    def _search(master_product_id: str):
         if not ProductSearchIntelligenceService:
             return {"available": False, "reason": "Product Search Intelligence not installed"}
         result = ProductSearchIntelligenceService.product_search(master_product_id)
         return result.get("search", result)
 
     @staticmethod
-    def _product(row: MasterProduct) -> dict[str, Any]:
+    def _product(row):
         return {
             "master_product_id": row.master_product_id,
             "name": row.name,
@@ -299,8 +321,35 @@ class ProductWorkspaceService:
             "updated_at": row.updated_at.isoformat() if row.updated_at else None,
         }
 
+    @classmethod
+    def _channel(cls, row):
+        raw = cls._safe_get(row, "raw")
+        raw = raw if isinstance(raw, dict) else {}
+
+        def first_attr_or_raw(*names):
+            for name in names:
+                value = cls._safe_get(row, name)
+                if value is not None:
+                    return value
+                if raw.get(name) is not None:
+                    return raw.get(name)
+            return None
+
+        return {
+            "id": cls._safe_get(row, "id"),
+            "master_product_id": cls._safe_get(row, "master_product_id"),
+            "channel": first_attr_or_raw("channel", "platform"),
+            "marketplace": first_attr_or_raw("marketplace", "marketplace_id", "country_code"),
+            "sku": first_attr_or_raw("sku", "seller_sku", "merchant_sku"),
+            "asin": first_attr_or_raw("asin", "amazon_asin"),
+            "listing_id": first_attr_or_raw("listing_id", "etsy_listing_id", "shopify_product_id", "external_id"),
+            "product_url": first_attr_or_raw("product_url", "url", "listing_url"),
+            "status": first_attr_or_raw("status", "state") or "unknown",
+            "raw": raw,
+        }
+
     @staticmethod
-    def _decision(row: MissionControlDecision) -> dict[str, Any]:
+    def _decision(row):
         return {
             "decision_id": row.decision_id,
             "master_product_id": row.master_product_id,
@@ -321,7 +370,7 @@ class ProductWorkspaceService:
         }
 
     @staticmethod
-    def _plan(row: ExecutionPlan) -> dict[str, Any]:
+    def _plan(row):
         return {
             "plan_id": row.plan_id,
             "decision_id": row.decision_id,
@@ -339,7 +388,7 @@ class ProductWorkspaceService:
         }
 
     @staticmethod
-    def _result(row: ExecutionResult) -> dict[str, Any]:
+    def _result(row):
         return {
             "result_id": row.result_id,
             "plan_id": row.plan_id,
@@ -352,7 +401,7 @@ class ProductWorkspaceService:
         }
 
     @staticmethod
-    def _event(row: BusinessEvent) -> dict[str, Any]:
+    def _event(row):
         return {
             "event_id": row.event_id,
             "event_type": row.event_type,

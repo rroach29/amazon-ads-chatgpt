@@ -69,6 +69,7 @@ from routes_executive_inbox import router as executive_inbox_router
 from routes_product_workspace import router as product_workspace_router
 from routes_product_metrics import router as product_metrics_router
 
+
 app = FastAPI(title="Business OS API")
 
 app.add_middleware(
@@ -127,7 +128,7 @@ app.include_router(provenance_router, prefix="/business-os", tags=["Business OS 
 app.include_router(profit_intelligence_router, prefix="/business-os", tags=["Business OS Profit Intelligence"])
 app.include_router(revenue_intelligence_router, prefix="/business-os", tags=["Business OS Revenue Intelligence"])
 app.include_router(product_intelligence_router, prefix="/business-os", tags=["Business OS Product Intelligence"])
-app.include_router(sp_api_router, prefix="/business-os", tags=["Business OS SP-API"] )
+app.include_router(sp_api_router, prefix="/business-os", tags=["Business OS SP-API"])
 app.include_router(business_registry_router, prefix="/business-os", tags=["Business OS Registry"])
 app.include_router(registry_integration_router, prefix="/business-os", tags=["Business OS Registry Integration"])
 app.include_router(platform_router, prefix="/business-os", tags=["Business OS Platform"])
