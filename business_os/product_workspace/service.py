@@ -1,13 +1,9 @@
-"""Business OS v0.6.0 — Product Workspace.
+"""Business OS v0.6.1 — Product Workspace hotfix.
 
-A product-first workspace that brings together:
-- Master Product Registry
-- Product Genome
-- Channel mappings
-- Product Search Intelligence
-- Product Advertising Intelligence
-- Mission Control v2 decisions
-- Execution plans/history
+Fixes:
+- ProductGenome compatibility when the live model does not have a `.scores` JSON field.
+- ProductWorkspace portfolio no longer crashes on ProductGenome attribute mismatch.
+- Workspace detail safely handles either JSON-style or column-style ProductGenome models.
 """
 
 from __future__ import annotations
@@ -34,7 +30,7 @@ except Exception:
 
 
 class ProductWorkspaceService:
-    version = "business-os-0.6.0"
+    version = "business-os-0.6.1"
 
     @classmethod
     def portfolio(cls, limit: int = 250, query: str | None = None) -> dict[str, Any]:
@@ -229,8 +225,7 @@ class ProductWorkspaceService:
 
         channel_names = sorted(set([c.channel for c in channels if c.channel]))
         marketplaces = sorted(set([c.marketplace for c in channels if c.marketplace]))
-
-        scores = genome.scores if genome and isinstance(genome.scores, dict) else {}
+        scores = cls._genome_scores(genome)
 
         return {
             "master_product_id": product.master_product_id,
@@ -243,10 +238,10 @@ class ProductWorkspaceService:
             "channels": channel_names,
             "marketplaces": marketplaces,
             "channel_count": len(channels),
-            "health": scores.get("product_health") if scores else None,
-            "organic_strength": scores.get("organic_strength") if scores else None,
-            "advertising_dependency": scores.get("advertising_dependency_index") if scores else None,
-            "profitability": scores.get("profitability") if scores else None,
+            "health": scores.get("product_health"),
+            "organic_strength": scores.get("organic_strength"),
+            "advertising_dependency": scores.get("advertising_dependency_index"),
+            "profitability": scores.get("profitability"),
             "open_decisions": pending,
             "execution_plans": plans,
         }
@@ -256,20 +251,23 @@ class ProductWorkspaceService:
         with_health = [item for item in items if item.get("health") is not None]
         avg_health = round(sum(item["health"] for item in with_health) / len(with_health)) if with_health else None
 
+        def has_channel(item: dict[str, Any], name: str) -> bool:
+            return any(str(c).lower() == name.lower() for c in item.get("channels", []))
+
         return {
             "products": len(items),
             "average_health": avg_health,
             "products_with_open_decisions": len([i for i in items if (i.get("open_decisions") or 0) > 0]),
             "total_open_decisions": sum(i.get("open_decisions") or 0 for i in items),
             "products_with_execution_plans": len([i for i in items if (i.get("execution_plans") or 0) > 0]),
-            "amazon_products": len([i for i in items if "Amazon" in i.get("channels", []) or "amazon" in [str(c).lower() for c in i.get("channels", [])]]),
-            "etsy_products": len([i for i in items if "Etsy" in i.get("channels", []) or "etsy" in [str(c).lower() for c in i.get("channels", [])]]),
-            "shopify_products": len([i for i in items if "Shopify" in i.get("channels", []) or "shopify" in [str(c).lower() for c in i.get("channels", [])]]),
+            "amazon_products": len([i for i in items if has_channel(i, "Amazon")]),
+            "etsy_products": len([i for i in items if has_channel(i, "Etsy")]),
+            "shopify_products": len([i for i in items if has_channel(i, "Shopify")]),
         }
 
     @classmethod
     def _workspace_summary(cls, product, genome, advertising, search, decisions, plans) -> dict[str, Any]:
-        scores = genome.scores if genome and isinstance(genome.scores, dict) else {}
+        scores = cls._genome_scores(genome)
         ad_health = advertising.get("advertising_health") if isinstance(advertising, dict) else None
         search_health = search.get("search_health") if isinstance(search, dict) else None
 
@@ -296,6 +294,75 @@ class ProductWorkspaceService:
             "active_execution_plans": active_plans,
             "top_recommendation": recommendation,
         }
+
+    @staticmethod
+    def _safe_get(obj: Any, name: str, default: Any = None) -> Any:
+        try:
+            return getattr(obj, name)
+        except Exception:
+            return default
+
+    @classmethod
+    def _genome_scores(cls, genome: ProductGenome | None) -> dict[str, Any]:
+        if not genome:
+            return {}
+
+        scores = cls._safe_get(genome, "scores")
+        if isinstance(scores, dict):
+            return {
+                "product_health": scores.get("product_health"),
+                "organic_strength": scores.get("organic_strength"),
+                "advertising_dependency_index": scores.get("advertising_dependency_index"),
+                "profitability": scores.get("profitability"),
+                "confidence": scores.get("confidence"),
+            }
+
+        # Column-style compatibility. Different earlier builds used different names.
+        aliases = {
+            "product_health": ["product_health", "health_score", "health"],
+            "organic_strength": ["organic_strength", "organic_score"],
+            "advertising_dependency_index": ["advertising_dependency_index", "advertising_dependency", "adi"],
+            "profitability": ["profitability", "profitability_score", "profit_score"],
+            "confidence": ["confidence", "confidence_score"],
+        }
+
+        output = {}
+        for key, names in aliases.items():
+            value = None
+            for name in names:
+                value = cls._safe_get(genome, name)
+                if value is not None:
+                    break
+            output[key] = value
+        return output
+
+    @classmethod
+    def _genome_strategy(cls, genome: ProductGenome | None) -> dict[str, Any]:
+        if not genome:
+            return {}
+        strategy = cls._safe_get(genome, "strategy")
+        if isinstance(strategy, dict):
+            return strategy
+
+        return {
+            "archetype": cls._safe_get(genome, "archetype"),
+            "objective": cls._safe_get(genome, "objective"),
+            "strategy": cls._safe_get(genome, "recommended_strategy"),
+        }
+
+    @classmethod
+    def _genome_signals(cls, genome: ProductGenome | None) -> dict[str, Any]:
+        if not genome:
+            return {}
+        signals = cls._safe_get(genome, "signals")
+        return signals if isinstance(signals, dict) else {}
+
+    @classmethod
+    def _genome_recommendations(cls, genome: ProductGenome | None) -> list[Any]:
+        if not genome:
+            return []
+        recs = cls._safe_get(genome, "recommendations")
+        return recs if isinstance(recs, list) else []
 
     @staticmethod
     def _advertising(master_product_id: str) -> dict[str, Any]:
@@ -343,18 +410,18 @@ class ProductWorkspaceService:
             "raw": row.raw,
         }
 
-    @staticmethod
-    def _genome(row: ProductGenome | None) -> dict[str, Any] | None:
+    @classmethod
+    def _genome(cls, row: ProductGenome | None) -> dict[str, Any] | None:
         if not row:
             return None
         return {
-            "master_product_id": row.master_product_id,
-            "scores": row.scores,
-            "strategy": row.strategy,
-            "signals": row.signals,
-            "recommendations": row.recommendations,
-            "created_at": row.created_at.isoformat() if row.created_at else None,
-            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+            "master_product_id": cls._safe_get(row, "master_product_id"),
+            "scores": cls._genome_scores(row),
+            "strategy": cls._genome_strategy(row),
+            "signals": cls._genome_signals(row),
+            "recommendations": cls._genome_recommendations(row),
+            "created_at": cls._safe_get(row, "created_at").isoformat() if cls._safe_get(row, "created_at") else None,
+            "updated_at": cls._safe_get(row, "updated_at").isoformat() if cls._safe_get(row, "updated_at") else None,
         }
 
     @staticmethod

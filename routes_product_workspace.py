@@ -1,4 +1,4 @@
-"""Business OS v0.6.0 — Product Workspace routes."""
+"""Business OS v0.6.1 — Product Workspace routes."""
 
 from fastapi import APIRouter, Header
 
