@@ -18,7 +18,7 @@ from business_registry.models import MasterProduct, ProductChannel
 
 
 class RegistryIntegrityService:
-    version = "business-os-0.9.1-registry-integrity-variation-matching"
+    version = "business-os-0.9.2-variation-family-safety"
 
     @classmethod
     def audit(cls, limit: int = 100) -> dict[str, Any]:
@@ -69,7 +69,7 @@ class RegistryIntegrityService:
                 "missing_data": missing_data,
                 "early_listings_sync_products": early_sync_products,
                 "merge_candidates": merge_candidates,
-                "next_step": "Review merge_candidates first. Do not run repairs until merge preview and rollback logging are implemented.",
+                "next_step": "Review merge_candidates first. Variation-family matches are not safe merges; they need parent/family modeling or manual approval.",
             }
         finally:
             db.close()
@@ -146,7 +146,7 @@ class RegistryIntegrityService:
         output = []
         for key, products in buckets.items():
             if len(products) > 1:
-                output.append({"base_title": key, "count": len(products), "products": [RegistryIntegrityService._product_payload(p) for p in products[:20]]})
+                output.append({"base_title": key, "count": len(products), "products": [RegistryIntegrityService._product_payload(p) for p in products[:20]], "note": "Base-title duplicates may be legitimate variations, not duplicate products."})
         output.sort(key=lambda row: row["count"], reverse=True)
         return output[:limit]
 
@@ -187,16 +187,26 @@ class RegistryIntegrityService:
                 if key in seen:
                     continue
                 seen.add(key)
-                score, reasons = RegistryIntegrityService._candidate_score(left, right, channels_by_product)
+                score, reasons, candidate_type = RegistryIntegrityService._candidate_score(left, right, channels_by_product)
                 if score >= 65:
-                    candidates.append({"confidence": score, "reasons": reasons, "recommended_action": "review_merge" if score < 95 else "safe_merge_candidate", "keep_candidate": RegistryIntegrityService._product_payload(RegistryIntegrityService._choose_keeper(left, right, channels_by_product)), "left": RegistryIntegrityService._product_payload(left), "right": RegistryIntegrityService._product_payload(right)})
-        candidates.sort(key=lambda row: row["confidence"], reverse=True)
+                    candidates.append({"confidence": score, "candidate_type": candidate_type, "reasons": reasons, "recommended_action": RegistryIntegrityService._recommended_action(score, candidate_type), "keep_candidate": RegistryIntegrityService._product_payload(RegistryIntegrityService._choose_keeper(left, right, channels_by_product)), "left": RegistryIntegrityService._product_payload(left), "right": RegistryIntegrityService._product_payload(right)})
+        candidates.sort(key=lambda row: (row["candidate_type"] == "exact_duplicate", row["confidence"]), reverse=True)
         return candidates[:limit]
 
     @staticmethod
-    def _candidate_score(left: MasterProduct, right: MasterProduct, channels_by_product: dict[str, list[ProductChannel]]) -> tuple[int, list[str]]:
+    def _recommended_action(score: int, candidate_type: str) -> str:
+        if candidate_type == "variation_family":
+            return "variation_family_review_not_safe_merge"
+        if score >= 98 and candidate_type == "exact_duplicate":
+            return "safe_merge_candidate"
+        return "review_merge"
+
+    @staticmethod
+    def _candidate_score(left: MasterProduct, right: MasterProduct, channels_by_product: dict[str, list[ProductChannel]]) -> tuple[int, list[str], str]:
         score = 0
         reasons = []
+        variation_signals = 0
+        exact_signals = 0
         left_channels = channels_by_product.get(left.master_product_id, [])
         right_channels = channels_by_product.get(right.master_product_id, [])
         left_skus = {c.sku for c in left_channels if c.sku}
@@ -209,37 +219,45 @@ class RegistryIntegrityService:
         right_source = right.source or ""
         left_base = RegistryIntegrityService._base_title(left.name or "")
         right_base = RegistryIntegrityService._base_title(right.name or "")
+        different_titles = bool(left.name and right.name and left.name.strip() != right.name.strip())
+        variation_values_differ = RegistryIntegrityService._variation_values(left.name) != RegistryIntegrityService._variation_values(right.name)
 
         if left.primary_sku and right.primary_sku and left.primary_sku == right.primary_sku:
-            score += 45; reasons.append("same primary SKU")
+            score += 45; exact_signals += 1; reasons.append("same primary SKU")
         if left_skus & right_skus:
-            score += 45; reasons.append("same marketplace SKU")
+            score += 45; exact_signals += 1; reasons.append("same marketplace SKU")
         if left_asins & right_asins:
-            score += 55; reasons.append("same marketplace ASIN")
+            score += 55; exact_signals += 1; reasons.append("same marketplace ASIN")
         if left_parent_skus & right_parent_skus:
-            score += 45; reasons.append("same variation parent SKU")
+            score += 35; variation_signals += 1; reasons.append("same variation parent SKU")
         if left.primary_sku and left.primary_sku in right_parent_skus:
-            score += 40; reasons.append("left primary SKU is right parent SKU")
+            score += 30; variation_signals += 1; reasons.append("left primary SKU is right parent SKU")
         if right.primary_sku and right.primary_sku in left_parent_skus:
-            score += 40; reasons.append("right primary SKU is left parent SKU")
+            score += 30; variation_signals += 1; reasons.append("right primary SKU is left parent SKU")
         if left.name and right.name:
             title_score = SequenceMatcher(None, RegistryIntegrityService._normalize(left.name), RegistryIntegrityService._normalize(right.name)).ratio()
-            if title_score >= 0.96:
-                score += 35; reasons.append("near-identical title")
+            if title_score >= 0.98 and not different_titles:
+                score += 35; exact_signals += 1; reasons.append("identical normalized title")
             elif title_score >= 0.84:
-                score += 25; reasons.append("similar title")
+                score += 20; variation_signals += 1; reasons.append("similar title")
             elif title_score >= 0.74:
-                score += 15; reasons.append("loose title similarity")
+                score += 12; variation_signals += 1; reasons.append("loose title similarity")
         if left_base and right_base and left_base == right_base:
-            score += 45; reasons.append("same normalized base title")
+            score += 30; variation_signals += 1; reasons.append("same normalized base title")
+        if variation_values_differ:
+            variation_signals += 1; reasons.append("different size/color variation value")
         if left.brand and right.brand and left.brand.lower() == right.brand.lower():
             score += 10; reasons.append("same brand")
         if left.product_family and right.product_family and left.product_family.lower() == right.product_family.lower():
             score += 10; reasons.append("same product family")
         if left_source in {"amazon_listings_discovery", "amazon_identity_sync"} and right_source in {"amazon_listings_discovery", "amazon_identity_sync"}:
             if left_base and right_base and SequenceMatcher(None, left_base, right_base).ratio() >= 0.82:
-                score += 25; reasons.append("both early Amazon sync products with similar base title")
-        return min(score, 100), reasons
+                score += 18; variation_signals += 1; reasons.append("both early Amazon sync products with similar base title")
+
+        candidate_type = "exact_duplicate" if exact_signals and not variation_values_differ and not (variation_signals and different_titles) else "variation_family"
+        if candidate_type == "variation_family":
+            score = min(score, 94)
+        return min(score, 100), reasons, candidate_type
 
     @staticmethod
     def _parent_skus(product: MasterProduct, channels: list[ProductChannel]) -> set[str]:
@@ -281,10 +299,19 @@ class RegistryIntegrityService:
         return left
 
     @staticmethod
+    def _variation_values(text: str | None) -> set[str]:
+        text = str(text or "").lower()
+        values = set(re.findall(r"\(([^)]*)\)", text))
+        colors_sizes = {"medium", "large", "small", "brown", "black", "white", "blue", "red", "green", "pink", "purple", "yellow", "orange", "grey", "gray", "gold", "silver"}
+        for word in re.sub(r"[^a-z0-9]+", " ", text).split():
+            if word in colors_sizes:
+                values.add(word)
+        return values
+
+    @staticmethod
     def _base_title(text: str) -> str:
         text = RegistryIntegrityService._normalize(text)
-        # Remove common variation words and trailing descriptive tokens that caused the first sync to split variants.
-        stop = {"medium", "large", "small", "brown", "black", "white", "blue", "red", "green", "pink", "purple", "yellow", "orange", "grey", "gray", "size", "color", "colour"}
+        stop = {"medium", "large", "small", "brown", "black", "white", "blue", "red", "green", "pink", "purple", "yellow", "orange", "grey", "gray", "gold", "silver", "size", "color", "colour"}
         return " ".join([word for word in text.split() if word not in stop])[:140]
 
     @staticmethod
