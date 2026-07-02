@@ -16,7 +16,7 @@ from business_registry.models import BusinessEvent, MasterProduct, ProductChanne
 
 
 class MasterProductAdminService:
-    version = "business-os-0.9.9-product-archive-restore"
+    version = "business-os-1.0.0-product-family-variant"
 
     @classmethod
     def create_product(
@@ -54,6 +54,51 @@ class MasterProductAdminService:
             event_id = cls._event(db, "MasterProductCreated", product, f"Created Master Product: {clean_name}", "Created from Product Workspace New Product workflow.", {"product": cls._payload(product), "marketplace_placeholders": created_channels, "duplicate_candidates": duplicate_candidates})
             db.commit()
             return {"status": "CREATED", "version": cls.version, "event_id": event_id, "product": cls._payload(product), "marketplace_placeholders": created_channels, "duplicate_candidates": duplicate_candidates}
+        except Exception as exc:
+            db.rollback()
+            return {"status": "ERROR", "version": cls.version, "message": str(exc)}
+        finally:
+            db.close()
+
+    @classmethod
+    def classify_variant(
+        cls,
+        master_product_id: str,
+        product_family_group: str | None = None,
+        variant_name: str | None = None,
+        variant_size: str | None = None,
+        variant_color: str | None = None,
+        variant_design: str | None = None,
+        variant_role: str = "Variant",
+        approve: bool = False,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        if not approve:
+            return {"status": "APPROVAL_REQUIRED", "version": cls.version, "message": "Variant classification requires approve=true."}
+        db = SessionLocal()
+        try:
+            product = db.query(MasterProduct).filter(MasterProduct.master_product_id == master_product_id).first()
+            if not product:
+                return {"status": "NOT_FOUND", "version": cls.version, "message": f"MasterProduct not found: {master_product_id}"}
+            raw = product.raw if isinstance(product.raw, dict) else {}
+            old = raw.get("variant_classification", {})
+            variant = {
+                "product_family_group": (product_family_group or "").strip() or None,
+                "variant_name": (variant_name or "").strip() or None,
+                "variant_size": (variant_size or "").strip() or None,
+                "variant_color": (variant_color or "").strip() or None,
+                "variant_design": (variant_design or "").strip() or None,
+                "variant_role": (variant_role or "Variant").strip() or "Variant",
+                "classified_at": datetime.utcnow().isoformat(),
+                "reason": reason,
+            }
+            raw["variant_classification"] = variant
+            raw.setdefault("variant_classification_history", []).append({"old": old, "new": variant})
+            product.raw = raw
+            product.updated_at = datetime.utcnow()
+            event_id = cls._event(db, "MasterProductVariantClassified", product, f"Classified variant: {product.name}", reason or "Manual Product Family / Variant classification.", {"master_product_id": product.master_product_id, "old": old, "new": variant})
+            db.commit()
+            return {"status": "CLASSIFIED", "version": cls.version, "event_id": event_id, "product": cls._payload(product), "variant_classification": variant}
         except Exception as exc:
             db.rollback()
             return {"status": "ERROR", "version": cls.version, "message": str(exc)}
@@ -169,7 +214,8 @@ class MasterProductAdminService:
 
     @staticmethod
     def _payload(product: MasterProduct) -> dict[str, Any]:
-        return {"master_product_id": product.master_product_id, "name": product.name, "brand": product.brand, "product_family": product.product_family, "primary_sku": product.primary_sku, "ean_upc": product.ean_upc, "status": product.status, "lifecycle_stage": product.lifecycle_stage, "active": product.active}
+        raw = product.raw if isinstance(product.raw, dict) else {}
+        return {"master_product_id": product.master_product_id, "name": product.name, "brand": product.brand, "product_family": product.product_family, "primary_sku": product.primary_sku, "ean_upc": product.ean_upc, "status": product.status, "lifecycle_stage": product.lifecycle_stage, "active": product.active, "variant_classification": raw.get("variant_classification")}
 
     @staticmethod
     def _channel_payload(channel: ProductChannel) -> dict[str, Any]:
