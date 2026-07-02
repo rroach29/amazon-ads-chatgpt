@@ -25,35 +25,14 @@ from business_registry.models import MasterProduct, ProductChannel, BusinessEven
 
 
 class AmazonIdentitySyncService:
-    version = "business-os-0.7.3-marketplace-aware-amazon-identity-sync"
+    version = "business-os-0.7.4-marketplace-identity-preview"
 
     @classmethod
     def sync_from_seller_central(cls, dry_run: bool = True, limit: int = 1000) -> dict[str, Any]:
         db = SessionLocal()
         try:
-            rows = (
-                db.query(
-                    SellerCentralSalesTraffic.asin,
-                    SellerCentralSalesTraffic.sku,
-                    SellerCentralSalesTraffic.title,
-                    SellerCentralSalesTraffic.country_code,
-                    SellerCentralSalesTraffic.marketplace,
-                    SellerCentralSalesTraffic.currency,
-                    func.max(SellerCentralSalesTraffic.date).label("last_seen"),
-                )
-                .filter((SellerCentralSalesTraffic.asin.isnot(None)) | (SellerCentralSalesTraffic.sku.isnot(None)))
-                .group_by(
-                    SellerCentralSalesTraffic.asin,
-                    SellerCentralSalesTraffic.sku,
-                    SellerCentralSalesTraffic.title,
-                    SellerCentralSalesTraffic.country_code,
-                    SellerCentralSalesTraffic.marketplace,
-                    SellerCentralSalesTraffic.currency,
-                )
-                .order_by(func.max(SellerCentralSalesTraffic.date).desc())
-                .limit(max(1, min(limit, 10000)))
-                .all()
-            )
+            rows = cls._seller_rows(db, limit)
+            existing_preview = cls._existing_identity_preview(db, limit=50)
 
             created_products = 0
             created_channels = 0
@@ -80,13 +59,7 @@ class AmazonIdentitySyncService:
                         db.flush()
                     created_products += 1
 
-                channel = cls._resolve_channel(
-                    db,
-                    master_product_id=product.master_product_id,
-                    sku=sku,
-                    asin=asin,
-                    marketplace=marketplace,
-                )
+                channel = cls._resolve_channel(db, master_product_id=product.master_product_id, sku=sku, asin=asin, marketplace=marketplace)
                 action = "none"
                 if not channel:
                     channel = ProductChannel(
@@ -161,10 +134,17 @@ class AmazonIdentitySyncService:
                 ))
                 db.commit()
 
+            message = None
+            if not rows and existing_preview["existing_marketplace_identities"]:
+                message = "No SellerCentralSalesTraffic rows were available to sync, but existing Amazon ProductChannel marketplace identities are already mapped. Showing existing mappings instead."
+            elif not rows:
+                message = "No SellerCentralSalesTraffic rows were available to sync. Run seller catalog/sales ingestion first, or use existing ProductChannel identities if already mapped."
+
             return {
                 "status": "DRY_RUN" if dry_run else "UPDATED",
                 "version": cls.version,
-                "source": "seller_central_sales_traffic",
+                "source": "seller_central_sales_traffic_plus_existing_product_channels",
+                "message": message,
                 "model_rule": "One MasterProduct may have separate Amazon marketplace identities, including different US and CA ASINs.",
                 "rows_checked": len(rows),
                 "created_products": created_products,
@@ -174,6 +154,7 @@ class AmazonIdentitySyncService:
                 "skipped": skipped,
                 "dry_run": dry_run,
                 "sample_mappings": samples,
+                **existing_preview,
             }
         except Exception as exc:
             db.rollback()
@@ -220,20 +201,70 @@ class AmazonIdentitySyncService:
             db.close()
 
     @staticmethod
+    def _seller_rows(db, limit: int):
+        return (
+            db.query(
+                SellerCentralSalesTraffic.asin,
+                SellerCentralSalesTraffic.sku,
+                SellerCentralSalesTraffic.title,
+                SellerCentralSalesTraffic.country_code,
+                SellerCentralSalesTraffic.marketplace,
+                SellerCentralSalesTraffic.currency,
+                func.max(SellerCentralSalesTraffic.date).label("last_seen"),
+            )
+            .filter((SellerCentralSalesTraffic.asin.isnot(None)) | (SellerCentralSalesTraffic.sku.isnot(None)))
+            .group_by(
+                SellerCentralSalesTraffic.asin,
+                SellerCentralSalesTraffic.sku,
+                SellerCentralSalesTraffic.title,
+                SellerCentralSalesTraffic.country_code,
+                SellerCentralSalesTraffic.marketplace,
+                SellerCentralSalesTraffic.currency,
+            )
+            .order_by(func.max(SellerCentralSalesTraffic.date).desc())
+            .limit(max(1, min(limit, 10000)))
+            .all()
+        )
+
+    @staticmethod
+    def _existing_identity_preview(db, limit: int = 50) -> dict[str, Any]:
+        q = (
+            db.query(ProductChannel, MasterProduct)
+            .join(MasterProduct, ProductChannel.master_product_id == MasterProduct.master_product_id)
+            .filter(ProductChannel.channel.ilike("%Amazon%"))
+            .order_by(ProductChannel.marketplace, MasterProduct.name)
+            .limit(max(1, min(limit, 500)))
+        )
+        rows = q.all()
+        preview = []
+        for channel, product in rows:
+            preview.append({
+                "action": "existing_marketplace_identity",
+                "product_created": False,
+                "master_product_id": product.master_product_id,
+                "product_name": product.name,
+                "sku": channel.sku,
+                "asin": channel.asin,
+                "marketplace": channel.marketplace,
+                "status": channel.status,
+                "channel_product_id": channel.channel_product_id,
+                "channel_listing_id": channel.channel_listing_id,
+            })
+        return {
+            "existing_marketplace_identities": db.query(ProductChannel).filter(ProductChannel.channel.ilike("%Amazon%")).count(),
+            "existing_sample_mappings": preview,
+        }
+
+    @staticmethod
     def _resolve_product(db, sku: str | None, asin: str | None, title: str | None, marketplace: str | None):
-        # Strongest match: exact marketplace identity.
         if asin:
             channel = AmazonIdentitySyncService._query_amazon_channel(db, marketplace).filter(ProductChannel.asin == asin).first()
             if channel:
                 return db.query(MasterProduct).filter(MasterProduct.master_product_id == channel.master_product_id).first()
-
         if sku:
             channel = AmazonIdentitySyncService._query_amazon_channel(db, marketplace).filter(ProductChannel.sku == sku).first()
             if channel:
                 return db.query(MasterProduct).filter(MasterProduct.master_product_id == channel.master_product_id).first()
-
-        # Cross-marketplace product link: same SKU can indicate same MasterProduct,
-        # but must create a separate marketplace identity rather than overwriting the other one.
         if sku:
             product = db.query(MasterProduct).filter(MasterProduct.primary_sku == sku).first()
             if product:
@@ -241,14 +272,10 @@ class AmazonIdentitySyncService:
             any_marketplace_channel = db.query(ProductChannel).filter(ProductChannel.channel.ilike("%Amazon%"), ProductChannel.sku == sku).first()
             if any_marketplace_channel:
                 return db.query(MasterProduct).filter(MasterProduct.master_product_id == any_marketplace_channel.master_product_id).first()
-
-        # Same ASIN usually identifies a listing in one marketplace, but if it appears elsewhere,
-        # still link to the same MasterProduct while keeping identities separate by marketplace.
         if asin:
             any_asin_channel = db.query(ProductChannel).filter(ProductChannel.channel.ilike("%Amazon%"), ProductChannel.asin == asin).first()
             if any_asin_channel:
                 return db.query(MasterProduct).filter(MasterProduct.master_product_id == any_asin_channel.master_product_id).first()
-
         if title:
             product = db.query(MasterProduct).filter(MasterProduct.name == title).first()
             if product:
@@ -280,10 +307,7 @@ class AmazonIdentitySyncService:
 
     @staticmethod
     def _has_other_marketplace_identity(db, master_product_id: str, marketplace: str | None) -> bool:
-        q = db.query(ProductChannel).filter(
-            ProductChannel.master_product_id == master_product_id,
-            ProductChannel.channel.ilike("%Amazon%"),
-        )
+        q = db.query(ProductChannel).filter(ProductChannel.master_product_id == master_product_id, ProductChannel.channel.ilike("%Amazon%"))
         if marketplace:
             q = q.filter(ProductChannel.marketplace != marketplace)
         return db.query(q.exists()).scalar()
@@ -330,6 +354,8 @@ class AmazonIdentitySyncService:
             "CANADA": "CA",
             "CA": "CA",
             "A2EUQ1WTGCTBG2": "CA",
+            "AMAZON.COM": "US",
+            "AMAZON.CA": "CA",
         }
         return aliases.get(upper, text)
 
