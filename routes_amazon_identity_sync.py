@@ -57,6 +57,25 @@ def amazon_listings_sync(
     )
 
 
+@router.post("/registry/amazon-listings/sync-all")
+def amazon_listings_sync_all(
+    marketplace: str = "US",
+    dry_run: bool = True,
+    page_size: int = 20,
+    max_pages: int = 10,
+    included_data: str = "summaries,attributes,offers,fulfillmentAvailability,issues",
+    x_api_key: str = Header(...),
+):
+    verify_key(x_api_key)
+    return AmazonListingsDiscoveryService.sync_all(
+        marketplace=marketplace,
+        dry_run=dry_run,
+        page_size=page_size,
+        max_pages=max_pages,
+        included_data=included_data,
+    )
+
+
 @router.post("/registry/amazon-identity/sync")
 def amazon_identity_sync(
     dry_run: bool = True,
