@@ -19,6 +19,7 @@ def registry_master_product_create(
     brand: str | None = None,
     product_family: str | None = None,
     primary_sku: str | None = None,
+    ean_upc: str | None = None,
     status: str = "Active",
     lifecycle_stage: str = "Idea",
     notes: str | None = None,
@@ -33,6 +34,7 @@ def registry_master_product_create(
         brand=brand,
         product_family=product_family,
         primary_sku=primary_sku,
+        ean_upc=ean_upc,
         status=status,
         lifecycle_stage=lifecycle_stage,
         notes=notes,
@@ -55,9 +57,9 @@ def registry_master_product_title_update(master_product_id: str, title: str, app
 
 
 @router.post("/registry/master-product/update")
-def registry_master_product_update(master_product_id: str, name: str | None = None, brand: str | None = None, product_family: str | None = None, primary_sku: str | None = None, status: str | None = None, lifecycle_stage: str | None = None, approve: bool = False, reason: str | None = None, x_api_key: str = Header(...)):
+def registry_master_product_update(master_product_id: str, name: str | None = None, brand: str | None = None, product_family: str | None = None, primary_sku: str | None = None, ean_upc: str | None = None, status: str | None = None, lifecycle_stage: str | None = None, approve: bool = False, reason: str | None = None, x_api_key: str = Header(...)):
     verify_key(x_api_key)
-    return MasterProductAdminService.update_fields(master_product_id=master_product_id, name=name, brand=brand, product_family=product_family, primary_sku=primary_sku, status=status, lifecycle_stage=lifecycle_stage, approve=approve, reason=reason)
+    return MasterProductAdminService.update_fields(master_product_id=master_product_id, name=name, brand=brand, product_family=product_family, primary_sku=primary_sku, ean_upc=ean_upc, status=status, lifecycle_stage=lifecycle_stage, approve=approve, reason=reason)
 
 
 @router.get("/registry/integrity/merge-preview")
