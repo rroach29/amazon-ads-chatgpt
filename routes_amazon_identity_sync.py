@@ -6,6 +6,7 @@ from auth import verify_key
 from business_os.registry.amazon_identity_sync import AmazonIdentitySyncService
 from business_os.registry.amazon_listings_discovery_v2 import AmazonListingsDiscoveryService
 from business_os.registry.duplicate_cluster_review import DuplicateClusterReviewService
+from business_os.registry.legacy_id_audit import LegacyIdAuditService
 from business_os.registry.manual_identity_link import ManualIdentityLinkService
 from business_os.registry.master_product_admin_v2 import MasterProductAdminService
 from business_os.registry.registry_integrity import RegistryIntegrityService
@@ -30,6 +31,12 @@ def registry_master_product_classify_variant(master_product_id: str, product_fam
 def registry_duplicate_clusters(limit: int = 500, min_cluster_size: int = 2, x_api_key: str = Header(...)):
     verify_key(x_api_key)
     return DuplicateClusterReviewService.review(limit=limit, min_cluster_size=min_cluster_size)
+
+
+@router.get("/registry/integrity/legacy-ids")
+def registry_legacy_ids(limit: int = 500, x_api_key: str = Header(...)):
+    verify_key(x_api_key)
+    return LegacyIdAuditService.audit(limit=limit)
 
 
 @router.post("/registry/master-product/archive")
