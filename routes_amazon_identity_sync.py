@@ -5,8 +5,18 @@ from fastapi import APIRouter, Header
 from auth import verify_key
 from business_os.registry.amazon_identity_sync import AmazonIdentitySyncService
 from business_os.registry.amazon_listings_discovery import AmazonListingsDiscoveryService
+from business_os.registry.registry_integrity import RegistryIntegrityService
 
 router = APIRouter()
+
+
+@router.get("/registry/integrity/audit")
+def registry_integrity_audit(
+    limit: int = 100,
+    x_api_key: str = Header(...),
+):
+    verify_key(x_api_key)
+    return RegistryIntegrityService.audit(limit=limit)
 
 
 @router.get("/registry/amazon-identity/summary")
