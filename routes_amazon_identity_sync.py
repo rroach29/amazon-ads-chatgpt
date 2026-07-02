@@ -4,10 +4,10 @@ from fastapi import APIRouter, Header
 
 from auth import verify_key
 from business_os.registry.amazon_identity_sync import AmazonIdentitySyncService
-from business_os.registry.amazon_listings_discovery import AmazonListingsDiscoveryService
+from business_os.registry.amazon_listings_discovery_v2 import AmazonListingsDiscoveryService
 from business_os.registry.duplicate_cluster_review import DuplicateClusterReviewService
 from business_os.registry.manual_identity_link import ManualIdentityLinkService
-from business_os.registry.master_product_admin import MasterProductAdminService
+from business_os.registry.master_product_admin_v2 import MasterProductAdminService
 from business_os.registry.registry_integrity import RegistryIntegrityService
 from business_os.registry.registry_merge import RegistryMergeService
 
