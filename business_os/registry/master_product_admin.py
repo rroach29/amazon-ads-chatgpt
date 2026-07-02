@@ -9,13 +9,87 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
+from sqlalchemy import or_
+
 from database import SessionLocal
-from business_registry.models import BusinessEvent, MasterProduct
+from business_registry.models import BusinessEvent, MasterProduct, ProductChannel
 
 
 class MasterProductAdminService:
-    version = "business-os-0.9.6-master-product-field-edit"
-    EDITABLE_FIELDS = {"name", "brand", "product_family", "primary_sku", "status", "lifecycle_stage"}
+    version = "business-os-0.9.7-product-create"
+
+    @classmethod
+    def create_product(
+        cls,
+        name: str,
+        brand: str | None = None,
+        product_family: str | None = None,
+        primary_sku: str | None = None,
+        status: str = "Active",
+        lifecycle_stage: str = "Idea",
+        notes: str | None = None,
+        template: str | None = None,
+        marketplaces: str | None = None,
+        approve: bool = False,
+    ) -> dict[str, Any]:
+        clean_name = (name or "").strip()
+        if not approve:
+            return {"status": "APPROVAL_REQUIRED", "version": cls.version, "message": "Product creation requires approve=true."}
+        if not clean_name:
+            return {"status": "ERROR", "version": cls.version, "message": "Product name is required."}
+        db = SessionLocal()
+        try:
+            duplicate_candidates = cls._duplicate_candidates(db, clean_name, primary_sku)
+            master_product_id = cls._next_master_product_id(db)
+            product = MasterProduct(
+                master_product_id=master_product_id,
+                name=clean_name,
+                brand=(brand or "").strip() or None,
+                product_family=(product_family or "").strip() or None,
+                primary_sku=(primary_sku or "").strip() or None,
+                status=status or "Active",
+                lifecycle_stage=lifecycle_stage or "Idea",
+                notes=notes,
+                source="manual_product_create",
+                raw={"template": template, "duplicate_candidates_at_create": duplicate_candidates},
+                active=True,
+            )
+            db.add(product)
+            db.flush()
+
+            created_channels = []
+            for channel, marketplace in cls._parse_marketplaces(marketplaces):
+                identity = ProductChannel(
+                    master_product_id=master_product_id,
+                    brand=product.brand,
+                    primary_sku=product.primary_sku,
+                    channel=channel,
+                    marketplace=marketplace,
+                    status="Planned",
+                    raw={"source": "new_product_wizard", "placeholder": True},
+                )
+                db.add(identity)
+                db.flush()
+                created_channels.append(cls._channel_payload(identity))
+
+            event_id = f"EV-{uuid4().hex[:12].upper()}"
+            db.add(BusinessEvent(
+                event_id=event_id,
+                event_type="MasterProductCreated",
+                master_product_id=master_product_id,
+                channel="Registry",
+                title=f"Created Master Product: {clean_name}",
+                description="Created from Product Workspace New Product workflow.",
+                source="master_product_admin",
+                payload={"product": cls._payload(product), "marketplace_placeholders": created_channels, "duplicate_candidates": duplicate_candidates},
+            ))
+            db.commit()
+            return {"status": "CREATED", "version": cls.version, "event_id": event_id, "product": cls._payload(product), "marketplace_placeholders": created_channels, "duplicate_candidates": duplicate_candidates}
+        except Exception as exc:
+            db.rollback()
+            return {"status": "ERROR", "version": cls.version, "message": str(exc)}
+        finally:
+            db.close()
 
     @classmethod
     def update_title(cls, master_product_id: str, title: str, approve: bool = False, reason: str | None = None) -> dict[str, Any]:
@@ -36,15 +110,7 @@ class MasterProductAdminService:
     ) -> dict[str, Any]:
         if not approve:
             return {"status": "APPROVAL_REQUIRED", "version": cls.version, "message": "Master Product update requires approve=true."}
-
-        proposed = {
-            "name": name,
-            "brand": brand,
-            "product_family": product_family,
-            "primary_sku": primary_sku,
-            "status": status,
-            "lifecycle_stage": lifecycle_stage,
-        }
+        proposed = {"name": name, "brand": brand, "product_family": product_family, "primary_sku": primary_sku, "status": status, "lifecycle_stage": lifecycle_stage}
         cleaned = {}
         for field, value in proposed.items():
             if value is None:
@@ -57,42 +123,23 @@ class MasterProductAdminService:
             cleaned[field] = text
         if not cleaned:
             return {"status": "NO_CHANGE", "version": cls.version, "message": "No editable fields supplied."}
-
         db = SessionLocal()
         try:
             product = db.query(MasterProduct).filter(MasterProduct.master_product_id == master_product_id).first()
             if not product:
                 return {"status": "NOT_FOUND", "version": cls.version, "message": f"MasterProduct not found: {master_product_id}"}
-
-            changes = {}
-            for field, value in cleaned.items():
-                old_value = getattr(product, field, None)
-                if old_value != value:
-                    changes[field] = {"old": old_value, "new": value}
+            changes = {field: {"old": getattr(product, field, None), "new": value} for field, value in cleaned.items() if getattr(product, field, None) != value}
             if not changes:
                 return {"status": "NO_CHANGE", "version": cls.version, "product": cls._payload(product)}
-
             now = datetime.utcnow()
             raw = product.raw if isinstance(product.raw, dict) else {}
             raw.setdefault("field_history", []).append({"changes": changes, "changed_at": now.isoformat(), "reason": reason})
-            if "name" in changes:
-                raw.setdefault("title_history", []).append({"old_title": changes["name"]["old"], "new_title": changes["name"]["new"], "changed_at": now.isoformat(), "reason": reason})
             product.raw = raw
             for field, values in changes.items():
                 setattr(product, field, values["new"])
             product.updated_at = now
-
             event_id = f"EV-{uuid4().hex[:12].upper()}"
-            db.add(BusinessEvent(
-                event_id=event_id,
-                event_type="MasterProductUpdated",
-                master_product_id=product.master_product_id,
-                channel="Registry",
-                title=f"Updated Master Product: {product.name}",
-                description=reason or "Manual Master Product field edit.",
-                source="master_product_admin",
-                payload={"master_product_id": product.master_product_id, "changes": changes},
-            ))
+            db.add(BusinessEvent(event_id=event_id, event_type="MasterProductUpdated", master_product_id=product.master_product_id, channel="Registry", title=f"Updated Master Product: {product.name}", description=reason or "Manual Master Product field edit.", source="master_product_admin", payload={"master_product_id": product.master_product_id, "changes": changes}))
             db.commit()
             return {"status": "UPDATED", "version": cls.version, "event_id": event_id, "changes": changes, "product": cls._payload(product)}
         except Exception as exc:
@@ -102,5 +149,39 @@ class MasterProductAdminService:
             db.close()
 
     @staticmethod
+    def _next_master_product_id(db) -> str:
+        # PID is internal and immutable. Keep MP prefix for compatibility with current system.
+        return f"MP-{uuid4().hex[:10].upper()}"
+
+    @staticmethod
+    def _parse_marketplaces(value: str | None) -> list[tuple[str, str | None]]:
+        if not value:
+            return []
+        mapping = {
+            "amazon_ca": ("Amazon", "CA"),
+            "amazon_us": ("Amazon", "US"),
+            "etsy": ("Etsy", "Global"),
+            "shopify": ("Shopify", "Store"),
+            "ebay": ("eBay", "Global"),
+        }
+        output = []
+        for token in [v.strip().lower() for v in value.split(",") if v.strip()]:
+            output.append(mapping.get(token, (token.title(), None)))
+        return output
+
+    @staticmethod
+    def _duplicate_candidates(db, name: str, primary_sku: str | None) -> list[dict[str, Any]]:
+        q = db.query(MasterProduct)
+        filters = [MasterProduct.name.ilike(f"%{name[:40]}%")]
+        if primary_sku:
+            filters.append(MasterProduct.primary_sku == primary_sku)
+        rows = q.filter(or_(*filters)).limit(10).all()
+        return [MasterProductAdminService._payload(row) for row in rows]
+
+    @staticmethod
     def _payload(product: MasterProduct) -> dict[str, Any]:
         return {"master_product_id": product.master_product_id, "name": product.name, "brand": product.brand, "product_family": product.product_family, "primary_sku": product.primary_sku, "status": product.status, "lifecycle_stage": product.lifecycle_stage, "active": product.active}
+
+    @staticmethod
+    def _channel_payload(channel: ProductChannel) -> dict[str, Any]:
+        return {"id": channel.id, "master_product_id": channel.master_product_id, "channel": channel.channel, "marketplace": channel.marketplace, "asin": channel.asin, "sku": channel.sku, "status": channel.status}
