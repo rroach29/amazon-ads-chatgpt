@@ -5,6 +5,7 @@ from fastapi import APIRouter, Header
 from auth import verify_key
 from business_os.registry.amazon_identity_sync import AmazonIdentitySyncService
 from business_os.registry.amazon_listings_discovery import AmazonListingsDiscoveryService
+from business_os.registry.duplicate_cluster_review import DuplicateClusterReviewService
 from business_os.registry.manual_identity_link import ManualIdentityLinkService
 from business_os.registry.master_product_admin import MasterProductAdminService
 from business_os.registry.registry_integrity import RegistryIntegrityService
@@ -23,6 +24,12 @@ def registry_master_product_create(name: str, brand: str | None = None, product_
 def registry_master_product_classify_variant(master_product_id: str, product_family_group: str | None = None, variant_name: str | None = None, variant_size: str | None = None, variant_color: str | None = None, variant_design: str | None = None, variant_role: str = "Variant", approve: bool = False, reason: str | None = None, x_api_key: str = Header(...)):
     verify_key(x_api_key)
     return MasterProductAdminService.classify_variant(master_product_id=master_product_id, product_family_group=product_family_group, variant_name=variant_name, variant_size=variant_size, variant_color=variant_color, variant_design=variant_design, variant_role=variant_role, approve=approve, reason=reason)
+
+
+@router.get("/registry/integrity/duplicate-clusters")
+def registry_duplicate_clusters(limit: int = 500, min_cluster_size: int = 2, x_api_key: str = Header(...)):
+    verify_key(x_api_key)
+    return DuplicateClusterReviewService.review(limit=limit, min_cluster_size=min_cluster_size)
 
 
 @router.post("/registry/master-product/archive")
