@@ -88,6 +88,7 @@ def amazon_listings_sync(
     page_size: int = 20,
     page_token: str | None = None,
     included_data: str = "summaries,attributes,offers,fulfillmentAvailability,issues",
+    create_missing_products: bool = False,
     x_api_key: str = Header(...),
 ):
     verify_key(x_api_key)
@@ -97,6 +98,7 @@ def amazon_listings_sync(
         page_size=page_size,
         page_token=page_token,
         included_data=included_data,
+        create_missing_products=create_missing_products,
     )
 
 
@@ -107,6 +109,7 @@ def amazon_listings_sync_all(
     page_size: int = 20,
     max_pages: int = 10,
     included_data: str = "summaries,attributes,offers,fulfillmentAvailability,issues",
+    create_missing_products: bool = False,
     x_api_key: str = Header(...),
 ):
     verify_key(x_api_key)
@@ -116,6 +119,7 @@ def amazon_listings_sync_all(
         page_size=page_size,
         max_pages=max_pages,
         included_data=included_data,
+        create_missing_products=create_missing_products,
     )
 
 
