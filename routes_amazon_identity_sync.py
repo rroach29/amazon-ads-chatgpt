@@ -5,6 +5,7 @@ from fastapi import APIRouter, Header
 from auth import verify_key
 from business_os.registry.amazon_identity_sync import AmazonIdentitySyncService
 from business_os.registry.amazon_listings_discovery import AmazonListingsDiscoveryService
+from business_os.registry.manual_identity_link import ManualIdentityLinkService
 from business_os.registry.registry_integrity import RegistryIntegrityService
 from business_os.registry.registry_merge import RegistryMergeService
 
@@ -48,6 +49,56 @@ def registry_merge(
         duplicate_master_product_id=duplicate_master_product_id,
         approve=approve,
         allow_variation_family=allow_variation_family,
+        reason=reason,
+    )
+
+
+@router.get("/registry/identity-link/preview")
+def registry_identity_link_preview(
+    master_product_id: str,
+    channel: str = "Amazon",
+    marketplace: str | None = None,
+    asin: str | None = None,
+    sku: str | None = None,
+    title: str | None = None,
+    status: str | None = None,
+    x_api_key: str = Header(...),
+):
+    verify_key(x_api_key)
+    return ManualIdentityLinkService.preview(
+        master_product_id=master_product_id,
+        channel=channel,
+        marketplace=marketplace,
+        asin=asin,
+        sku=sku,
+        title=title,
+        status=status,
+    )
+
+
+@router.post("/registry/identity-link")
+def registry_identity_link(
+    master_product_id: str,
+    channel: str = "Amazon",
+    marketplace: str | None = None,
+    asin: str | None = None,
+    sku: str | None = None,
+    title: str | None = None,
+    status: str | None = None,
+    approve: bool = False,
+    reason: str | None = None,
+    x_api_key: str = Header(...),
+):
+    verify_key(x_api_key)
+    return ManualIdentityLinkService.link(
+        master_product_id=master_product_id,
+        channel=channel,
+        marketplace=marketplace,
+        asin=asin,
+        sku=sku,
+        title=title,
+        status=status,
+        approve=approve,
         reason=reason,
     )
 
