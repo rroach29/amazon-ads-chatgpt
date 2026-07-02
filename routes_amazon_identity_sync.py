@@ -6,6 +6,7 @@ from auth import verify_key
 from business_os.registry.amazon_identity_sync import AmazonIdentitySyncService
 from business_os.registry.amazon_listings_discovery import AmazonListingsDiscoveryService
 from business_os.registry.registry_integrity import RegistryIntegrityService
+from business_os.registry.registry_merge import RegistryMergeService
 
 router = APIRouter()
 
@@ -17,6 +18,38 @@ def registry_integrity_audit(
 ):
     verify_key(x_api_key)
     return RegistryIntegrityService.audit(limit=limit)
+
+
+@router.get("/registry/integrity/merge-preview")
+def registry_merge_preview(
+    keeper_master_product_id: str,
+    duplicate_master_product_id: str,
+    x_api_key: str = Header(...),
+):
+    verify_key(x_api_key)
+    return RegistryMergeService.preview(
+        keeper_master_product_id=keeper_master_product_id,
+        duplicate_master_product_id=duplicate_master_product_id,
+    )
+
+
+@router.post("/registry/integrity/merge")
+def registry_merge(
+    keeper_master_product_id: str,
+    duplicate_master_product_id: str,
+    approve: bool = False,
+    allow_variation_family: bool = False,
+    reason: str | None = None,
+    x_api_key: str = Header(...),
+):
+    verify_key(x_api_key)
+    return RegistryMergeService.merge(
+        keeper_master_product_id=keeper_master_product_id,
+        duplicate_master_product_id=duplicate_master_product_id,
+        approve=approve,
+        allow_variation_family=allow_variation_family,
+        reason=reason,
+    )
 
 
 @router.get("/registry/amazon-identity/summary")
