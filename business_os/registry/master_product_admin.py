@@ -16,7 +16,7 @@ from business_registry.models import BusinessEvent, MasterProduct, ProductChanne
 
 
 class MasterProductAdminService:
-    version = "business-os-0.9.7-product-create"
+    version = "business-os-0.9.8-product-create-ean-upc"
 
     @classmethod
     def create_product(
@@ -25,6 +25,7 @@ class MasterProductAdminService:
         brand: str | None = None,
         product_family: str | None = None,
         primary_sku: str | None = None,
+        ean_upc: str | None = None,
         status: str = "Active",
         lifecycle_stage: str = "Idea",
         notes: str | None = None,
@@ -39,7 +40,7 @@ class MasterProductAdminService:
             return {"status": "ERROR", "version": cls.version, "message": "Product name is required."}
         db = SessionLocal()
         try:
-            duplicate_candidates = cls._duplicate_candidates(db, clean_name, primary_sku)
+            duplicate_candidates = cls._duplicate_candidates(db, clean_name, primary_sku, ean_upc)
             master_product_id = cls._next_master_product_id(db)
             product = MasterProduct(
                 master_product_id=master_product_id,
@@ -47,6 +48,7 @@ class MasterProductAdminService:
                 brand=(brand or "").strip() or None,
                 product_family=(product_family or "").strip() or None,
                 primary_sku=(primary_sku or "").strip() or None,
+                ean_upc=(ean_upc or "").strip() or None,
                 status=status or "Active",
                 lifecycle_stage=lifecycle_stage or "Idea",
                 notes=notes,
@@ -105,12 +107,13 @@ class MasterProductAdminService:
         brand: str | None = None,
         product_family: str | None = None,
         primary_sku: str | None = None,
+        ean_upc: str | None = None,
         status: str | None = None,
         lifecycle_stage: str | None = None,
     ) -> dict[str, Any]:
         if not approve:
             return {"status": "APPROVAL_REQUIRED", "version": cls.version, "message": "Master Product update requires approve=true."}
-        proposed = {"name": name, "brand": brand, "product_family": product_family, "primary_sku": primary_sku, "status": status, "lifecycle_stage": lifecycle_stage}
+        proposed = {"name": name, "brand": brand, "product_family": product_family, "primary_sku": primary_sku, "ean_upc": ean_upc, "status": status, "lifecycle_stage": lifecycle_stage}
         cleaned = {}
         for field, value in proposed.items():
             if value is None:
@@ -150,37 +153,28 @@ class MasterProductAdminService:
 
     @staticmethod
     def _next_master_product_id(db) -> str:
-        # PID is internal and immutable. Keep MP prefix for compatibility with current system.
         return f"MP-{uuid4().hex[:10].upper()}"
 
     @staticmethod
     def _parse_marketplaces(value: str | None) -> list[tuple[str, str | None]]:
         if not value:
             return []
-        mapping = {
-            "amazon_ca": ("Amazon", "CA"),
-            "amazon_us": ("Amazon", "US"),
-            "etsy": ("Etsy", "Global"),
-            "shopify": ("Shopify", "Store"),
-            "ebay": ("eBay", "Global"),
-        }
-        output = []
-        for token in [v.strip().lower() for v in value.split(",") if v.strip()]:
-            output.append(mapping.get(token, (token.title(), None)))
-        return output
+        mapping = {"amazon_ca": ("Amazon", "CA"), "amazon_us": ("Amazon", "US"), "etsy": ("Etsy", "Global"), "shopify": ("Shopify", "Store"), "ebay": ("eBay", "Global")}
+        return [mapping.get(token, (token.title(), None)) for token in [v.strip().lower() for v in value.split(",") if v.strip()]]
 
     @staticmethod
-    def _duplicate_candidates(db, name: str, primary_sku: str | None) -> list[dict[str, Any]]:
-        q = db.query(MasterProduct)
+    def _duplicate_candidates(db, name: str, primary_sku: str | None, ean_upc: str | None = None) -> list[dict[str, Any]]:
         filters = [MasterProduct.name.ilike(f"%{name[:40]}%")]
         if primary_sku:
             filters.append(MasterProduct.primary_sku == primary_sku)
-        rows = q.filter(or_(*filters)).limit(10).all()
+        if ean_upc:
+            filters.append(MasterProduct.ean_upc == ean_upc)
+        rows = db.query(MasterProduct).filter(or_(*filters)).limit(10).all()
         return [MasterProductAdminService._payload(row) for row in rows]
 
     @staticmethod
     def _payload(product: MasterProduct) -> dict[str, Any]:
-        return {"master_product_id": product.master_product_id, "name": product.name, "brand": product.brand, "product_family": product.product_family, "primary_sku": product.primary_sku, "status": product.status, "lifecycle_stage": product.lifecycle_stage, "active": product.active}
+        return {"master_product_id": product.master_product_id, "name": product.name, "brand": product.brand, "product_family": product.product_family, "primary_sku": product.primary_sku, "ean_upc": product.ean_upc, "status": product.status, "lifecycle_stage": product.lifecycle_stage, "active": product.active}
 
     @staticmethod
     def _channel_payload(channel: ProductChannel) -> dict[str, Any]:
