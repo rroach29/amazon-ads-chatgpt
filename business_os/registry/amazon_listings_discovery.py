@@ -1,8 +1,8 @@
 """Amazon Listings Items discovery for Business OS Registry Intelligence.
 
-Uses the SP-API Listings Items search endpoint as the catalog-first source for
-Amazon marketplace identities. This is additive and does not modify the lower
-level SPAPIClient; it reuses the existing signed request layer.
+Uses SP-API Listings Items as the catalog-first Amazon source, but all writes
+must pass through a registry gatekeeper. The gatekeeper prevents silent Master
+Product drift by only auto-creating new Master Products when explicitly allowed.
 """
 
 from __future__ import annotations
@@ -19,16 +19,10 @@ from sp_api import SPAPIClient, SPAPIConfig
 
 
 class AmazonListingsDiscoveryService:
-    version = "business-os-0.8.1-listings-reconciliation"
+    version = "business-os-0.8.2-registry-gatekeeper"
 
     @classmethod
-    def preview(
-        cls,
-        marketplace: str = "US",
-        page_size: int = 20,
-        page_token: str | None = None,
-        included_data: str = "summaries,attributes,offers,fulfillmentAvailability,issues",
-    ) -> dict[str, Any]:
+    def preview(cls, marketplace: str = "US", page_size: int = 20, page_token: str | None = None, included_data: str = "summaries,attributes,offers,fulfillmentAvailability,issues") -> dict[str, Any]:
         client = SPAPIClient(SPAPIConfig.from_env(marketplace))
         response = cls._search(client, marketplace=marketplace, page_size=page_size, page_token=page_token, included_data=included_data)
         if response.get("status") != "OK":
@@ -37,16 +31,16 @@ class AmazonListingsDiscoveryService:
         return {"status": "OK", "version": cls.version, "marketplace": marketplace, "dry_run": True, "count": len(listings), "next_token": cls._next_token(response.get("response", {})), "listings": listings, "raw_keys": list((response.get("response") or {}).keys())}
 
     @classmethod
-    def sync(cls, marketplace: str = "US", dry_run: bool = True, page_size: int = 20, page_token: str | None = None, included_data: str = "summaries,attributes,offers,fulfillmentAvailability,issues") -> dict[str, Any]:
+    def sync(cls, marketplace: str = "US", dry_run: bool = True, page_size: int = 20, page_token: str | None = None, included_data: str = "summaries,attributes,offers,fulfillmentAvailability,issues", create_missing_products: bool = False) -> dict[str, Any]:
         client = SPAPIClient(SPAPIConfig.from_env(marketplace))
         response = cls._search(client, marketplace=marketplace, page_size=page_size, page_token=page_token, included_data=included_data)
         if response.get("status") != "OK":
             return response
         listings = cls._normalize_response(response.get("response", {}), marketplace=marketplace)
-        return cls._sync_listings(listings=listings, marketplace=marketplace, dry_run=dry_run, next_token=cls._next_token(response.get("response", {})))
+        return cls._sync_listings(listings=listings, marketplace=marketplace, dry_run=dry_run, next_token=cls._next_token(response.get("response", {})), create_missing_products=create_missing_products)
 
     @classmethod
-    def sync_all(cls, marketplace: str = "US", dry_run: bool = True, page_size: int = 20, max_pages: int = 10, included_data: str = "summaries,attributes,offers,fulfillmentAvailability,issues") -> dict[str, Any]:
+    def sync_all(cls, marketplace: str = "US", dry_run: bool = True, page_size: int = 20, max_pages: int = 10, included_data: str = "summaries,attributes,offers,fulfillmentAvailability,issues", create_missing_products: bool = False) -> dict[str, Any]:
         client = SPAPIClient(SPAPIConfig.from_env(marketplace))
         all_listings: list[dict[str, Any]] = []
         token = None
@@ -61,13 +55,13 @@ class AmazonListingsDiscoveryService:
             token = cls._next_token(payload)
             if not token:
                 break
-        result = cls._sync_listings(listings=all_listings, marketplace=marketplace, dry_run=dry_run, next_token=token)
+        result = cls._sync_listings(listings=all_listings, marketplace=marketplace, dry_run=dry_run, next_token=token, create_missing_products=create_missing_products)
         result["pages_processed"] = pages
         result["has_more"] = bool(token)
         return result
 
     @classmethod
-    def _sync_listings(cls, listings: list[dict[str, Any]], marketplace: str, dry_run: bool, next_token: str | None) -> dict[str, Any]:
+    def _sync_listings(cls, listings: list[dict[str, Any]], marketplace: str, dry_run: bool, next_token: str | None, create_missing_products: bool = False) -> dict[str, Any]:
         db = SessionLocal()
         try:
             created_products = 0
@@ -75,21 +69,39 @@ class AmazonListingsDiscoveryService:
             updated_identities = 0
             auto_matched_products = 0
             review_needed = 0
+            blocked_new_products = 0
             samples = []
+            review_queue = []
+
             for listing in listings:
                 match = cls._match_product(db, listing)
                 product = match.get("product")
                 product_created = False
+                gated = False
+
                 if not product:
-                    product_created = True
-                    product = cls._new_product(listing)
-                    created_products += 1
-                    if not dry_run:
-                        db.add(product)
-                        db.flush()
+                    if create_missing_products:
+                        product_created = True
+                        product = cls._new_product(listing)
+                        created_products += 1
+                        if not dry_run:
+                            db.add(product)
+                            db.flush()
+                    else:
+                        gated = True
+                        blocked_new_products += 1
+                        review_needed += 1
+                        review_row = cls._review_row(listing, match, reason="no confident master product match; creation blocked by registry gatekeeper")
+                        review_queue.append(review_row)
+                        if len(samples) < 75:
+                            samples.append(review_row)
+                        continue
                 else:
-                    auto_matched_products += 1 if match.get("confidence", 0) >= 95 else 0
-                    review_needed += 1 if match.get("confidence", 0) < 95 else 0
+                    if match.get("confidence", 0) >= 95:
+                        auto_matched_products += 1
+                    else:
+                        review_needed += 1
+                        review_queue.append(cls._review_row(listing, match, product=product, reason="matched below auto-link confidence threshold"))
 
                 channel = cls._resolve_channel(db, product.master_product_id, listing)
                 action = "none"
@@ -105,18 +117,22 @@ class AmazonListingsDiscoveryService:
                         updated_identities += 1
 
                 if len(samples) < 75:
-                    samples.append({**listing, "action": action, "product_created": product_created, "master_product_id": product.master_product_id, "product_name": product.name, "match_confidence": match.get("confidence", 0), "match_reason": match.get("reason"), "needs_review": match.get("confidence", 0) < 95 and not product_created})
+                    samples.append({**listing, "action": action, "product_created": product_created, "creation_blocked": gated, "master_product_id": product.master_product_id, "product_name": product.name, "match_confidence": match.get("confidence", 0), "match_reason": match.get("reason"), "needs_review": match.get("confidence", 0) < 95 and not product_created})
 
             if not dry_run:
-                db.add(BusinessEvent(event_id=f"EV-{uuid4().hex[:12].upper()}", event_type="AmazonListingsDiscovery", title="Amazon Listings Items discovery sync completed", description=f"Marketplace {marketplace}: created {created_identities}, updated {updated_identities}, created products {created_products}.", source="amazon_listings_discovery", payload={"marketplace": marketplace, "created_products": created_products, "created_identities": created_identities, "updated_identities": updated_identities, "auto_matched_products": auto_matched_products, "review_needed": review_needed, "count": len(listings)}))
+                db.add(BusinessEvent(event_id=f"EV-{uuid4().hex[:12].upper()}", event_type="AmazonListingsDiscovery", title="Amazon Listings Items discovery sync completed", description=f"Marketplace {marketplace}: created identities {created_identities}, updated {updated_identities}, created products {created_products}, blocked new products {blocked_new_products}.", source="amazon_listings_discovery", payload={"marketplace": marketplace, "created_products": created_products, "created_identities": created_identities, "updated_identities": updated_identities, "auto_matched_products": auto_matched_products, "review_needed": review_needed, "blocked_new_products": blocked_new_products, "create_missing_products": create_missing_products, "count": len(listings), "review_queue_sample": review_queue[:50]}))
                 db.commit()
 
-            return {"status": "DRY_RUN" if dry_run else "UPDATED", "version": cls.version, "marketplace": marketplace, "dry_run": dry_run, "count": len(listings), "next_token": next_token, "created_products": created_products, "created_marketplace_identities": created_identities, "updated_marketplace_identities": updated_identities, "auto_matched_products": auto_matched_products, "review_needed": review_needed, "sample_mappings": samples}
+            return {"status": "DRY_RUN" if dry_run else "UPDATED", "version": cls.version, "marketplace": marketplace, "dry_run": dry_run, "registry_gatekeeper": {"create_missing_products": create_missing_products, "rule": "New Master Products are blocked unless create_missing_products=true."}, "count": len(listings), "next_token": next_token, "created_products": created_products, "created_marketplace_identities": created_identities, "updated_marketplace_identities": updated_identities, "auto_matched_products": auto_matched_products, "review_needed": review_needed, "blocked_new_products": blocked_new_products, "sample_mappings": samples, "review_queue": review_queue[:100]}
         except Exception as exc:
             db.rollback()
             return {"status": "ERROR", "version": cls.version, "message": str(exc)}
         finally:
             db.close()
+
+    @staticmethod
+    def _review_row(listing: dict[str, Any], match: dict[str, Any], product: MasterProduct | None = None, reason: str | None = None) -> dict[str, Any]:
+        return {**listing, "action": "registry_review_required", "creation_blocked": product is None, "master_product_id": product.master_product_id if product else None, "product_name": product.name if product else None, "match_confidence": match.get("confidence", 0), "match_reason": match.get("reason"), "needs_review": True, "review_reason": reason}
 
     @staticmethod
     def _search(client: SPAPIClient, marketplace: str, page_size: int, page_token: str | None, included_data: str) -> dict[str, Any]:
@@ -180,10 +196,10 @@ class AmazonListingsDiscoveryService:
             if channel:
                 product = db.query(MasterProduct).filter(MasterProduct.master_product_id == channel.master_product_id).first()
                 if product:
-                    return {"product": product, "confidence": 97, "reason": "variation parent SKU"}
+                    return {"product": product, "confidence": 92, "reason": "variation parent SKU; review family relationship"}
             product = db.query(MasterProduct).filter(MasterProduct.primary_sku == parent_sku).first()
             if product:
-                return {"product": product, "confidence": 96, "reason": "primary parent SKU"}
+                return {"product": product, "confidence": 92, "reason": "primary parent SKU; review family relationship"}
         if title:
             exact = db.query(MasterProduct).filter(MasterProduct.name == title).first()
             if exact:
@@ -198,8 +214,8 @@ class AmazonListingsDiscoveryService:
                     best_score = score
                     best = candidate
             if best and best_score >= 0.88:
-                return {"product": best, "confidence": round(best_score * 100), "reason": "normalized title similarity"}
-        return {"product": None, "confidence": 0, "reason": "new listing"}
+                return {"product": best, "confidence": min(round(best_score * 100), 94), "reason": "normalized title similarity; review before linking"}
+        return {"product": None, "confidence": 0, "reason": "new or unmatched listing"}
 
     @staticmethod
     def _resolve_channel(db, master_product_id: str, listing: dict[str, Any]):
