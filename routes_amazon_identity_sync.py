@@ -4,6 +4,7 @@ from fastapi import APIRouter, Header
 
 from auth import verify_key
 from business_os.registry.amazon_identity_sync import AmazonIdentitySyncService
+from business_os.registry.amazon_listings_discovery import AmazonListingsDiscoveryService
 
 router = APIRouter()
 
@@ -18,6 +19,42 @@ def amazon_identity_summary(x_api_key: str = Header(...)):
 def amazon_seller_central_identity_diagnostics(x_api_key: str = Header(...)):
     verify_key(x_api_key)
     return AmazonIdentitySyncService.seller_central_diagnostics()
+
+
+@router.get("/registry/amazon-listings/preview")
+def amazon_listings_preview(
+    marketplace: str = "US",
+    page_size: int = 20,
+    page_token: str | None = None,
+    included_data: str = "summaries,attributes,offers,fulfillmentAvailability,issues",
+    x_api_key: str = Header(...),
+):
+    verify_key(x_api_key)
+    return AmazonListingsDiscoveryService.preview(
+        marketplace=marketplace,
+        page_size=page_size,
+        page_token=page_token,
+        included_data=included_data,
+    )
+
+
+@router.post("/registry/amazon-listings/sync")
+def amazon_listings_sync(
+    marketplace: str = "US",
+    dry_run: bool = True,
+    page_size: int = 20,
+    page_token: str | None = None,
+    included_data: str = "summaries,attributes,offers,fulfillmentAvailability,issues",
+    x_api_key: str = Header(...),
+):
+    verify_key(x_api_key)
+    return AmazonListingsDiscoveryService.sync(
+        marketplace=marketplace,
+        dry_run=dry_run,
+        page_size=page_size,
+        page_token=page_token,
+        included_data=included_data,
+    )
 
 
 @router.post("/registry/amazon-identity/sync")
