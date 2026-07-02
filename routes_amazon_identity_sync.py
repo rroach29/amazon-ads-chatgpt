@@ -14,34 +14,21 @@ router = APIRouter()
 
 
 @router.post("/registry/master-product/create")
-def registry_master_product_create(
-    name: str,
-    brand: str | None = None,
-    product_family: str | None = None,
-    primary_sku: str | None = None,
-    ean_upc: str | None = None,
-    status: str = "Active",
-    lifecycle_stage: str = "Idea",
-    notes: str | None = None,
-    template: str | None = None,
-    marketplaces: str | None = None,
-    approve: bool = False,
-    x_api_key: str = Header(...),
-):
+def registry_master_product_create(name: str, brand: str | None = None, product_family: str | None = None, primary_sku: str | None = None, ean_upc: str | None = None, status: str = "Active", lifecycle_stage: str = "Idea", notes: str | None = None, template: str | None = None, marketplaces: str | None = None, approve: bool = False, x_api_key: str = Header(...)):
     verify_key(x_api_key)
-    return MasterProductAdminService.create_product(
-        name=name,
-        brand=brand,
-        product_family=product_family,
-        primary_sku=primary_sku,
-        ean_upc=ean_upc,
-        status=status,
-        lifecycle_stage=lifecycle_stage,
-        notes=notes,
-        template=template,
-        marketplaces=marketplaces,
-        approve=approve,
-    )
+    return MasterProductAdminService.create_product(name=name, brand=brand, product_family=product_family, primary_sku=primary_sku, ean_upc=ean_upc, status=status, lifecycle_stage=lifecycle_stage, notes=notes, template=template, marketplaces=marketplaces, approve=approve)
+
+
+@router.post("/registry/master-product/archive")
+def registry_master_product_archive(master_product_id: str, approve: bool = False, reason: str | None = None, x_api_key: str = Header(...)):
+    verify_key(x_api_key)
+    return MasterProductAdminService.archive_product(master_product_id=master_product_id, approve=approve, reason=reason)
+
+
+@router.post("/registry/master-product/restore")
+def registry_master_product_restore(master_product_id: str, approve: bool = False, reason: str | None = None, x_api_key: str = Header(...)):
+    verify_key(x_api_key)
+    return MasterProductAdminService.restore_product(master_product_id=master_product_id, approve=approve, reason=reason)
 
 
 @router.get("/registry/integrity/audit")
