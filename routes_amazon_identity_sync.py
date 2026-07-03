@@ -5,6 +5,7 @@ from fastapi import APIRouter, Header
 from auth import verify_key
 from business_os.registry.amazon_identity_sync import AmazonIdentitySyncService
 from business_os.registry.amazon_listings_discovery_v2 import AmazonListingsDiscoveryService
+from business_os.registry.development_reset import DevelopmentRegistryResetService
 from business_os.registry.duplicate_cluster_review import DuplicateClusterReviewService
 from business_os.registry.legacy_id_audit import LegacyIdAuditService
 from business_os.registry.manual_identity_link import ManualIdentityLinkService
@@ -13,6 +14,18 @@ from business_os.registry.registry_integrity import RegistryIntegrityService
 from business_os.registry.registry_merge import RegistryMergeService
 
 router = APIRouter()
+
+
+@router.get("/registry/development-reset/preview")
+def registry_development_reset_preview(x_api_key: str = Header(...)):
+    verify_key(x_api_key)
+    return DevelopmentRegistryResetService.preview()
+
+
+@router.post("/registry/development-reset")
+def registry_development_reset(confirm: str | None = None, approve: bool = False, x_api_key: str = Header(...)):
+    verify_key(x_api_key)
+    return DevelopmentRegistryResetService.reset(confirm=confirm, approve=approve)
 
 
 @router.post("/registry/master-product/create")
