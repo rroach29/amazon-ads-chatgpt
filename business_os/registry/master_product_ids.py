@@ -8,28 +8,35 @@ from __future__ import annotations
 
 import re
 
-from business_registry.models import MasterProduct
+from sqlalchemy import text
 
 
 class MasterProductIdService:
-    version = "business-os-1.0.0-sequential-master-product-ids"
+    version = "business-os-1.0.2-sequence-master-product-ids"
     pattern = re.compile(r"^MP-(\d{6})$")
+    sequence_name = "master_product_id_seq"
 
     @classmethod
     def next_id(cls, db) -> str:
-        max_number = 0
-        rows = db.query(MasterProduct.master_product_id).filter(MasterProduct.master_product_id.like("MP-%")).all()
-        for (value,) in rows:
-            match = cls.pattern.match(value or "")
-            if match:
-                max_number = max(max_number, int(match.group(1)))
-        candidate = max_number + 1
-        while True:
-            master_product_id = f"MP-{candidate:06d}"
-            exists = db.query(MasterProduct).filter(MasterProduct.master_product_id == master_product_id).first()
-            if not exists:
-                return master_product_id
-            candidate += 1
+        """Return the next marketplace-neutral Master Product ID.
+
+        Uses a PostgreSQL sequence so bulk imports cannot reuse the same ID inside
+        one transaction. The sequence is created and advanced to at least the
+        current max MP-000000 value before nextval is called.
+        """
+        cls.ensure_sequence(db)
+        value = db.execute(text(f"SELECT nextval('{cls.sequence_name}')")).scalar()
+        return f"MP-{int(value):06d}"
+
+    @classmethod
+    def ensure_sequence(cls, db) -> None:
+        db.execute(text(f"CREATE SEQUENCE IF NOT EXISTS {cls.sequence_name} START WITH 1 INCREMENT BY 1"))
+        max_existing = db.execute(text("""
+            SELECT COALESCE(MAX(CAST(SUBSTRING(master_product_id FROM 4) AS INTEGER)), 0)
+            FROM master_products
+            WHERE master_product_id ~ '^MP-[0-9]{6}$'
+        """)).scalar() or 0
+        db.execute(text(f"SELECT setval('{cls.sequence_name}', GREATEST((SELECT last_value FROM {cls.sequence_name}), :max_existing), true)"), {"max_existing": int(max_existing)})
 
     @classmethod
     def is_legacy_source_encoded_id(cls, master_product_id: str | None) -> bool:
